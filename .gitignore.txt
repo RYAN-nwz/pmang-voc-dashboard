@@ -1,0 +1,6 @@
+# Service Account Key
+service_account.json
+
+# Python cache
+__pycache__/
+*.pyc

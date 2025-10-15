@@ -4,6 +4,7 @@ import re
 import base64
 from datetime import datetime, timedelta
 from urllib.parse import quote as _urlquote
+from zoneinfo import ZoneInfo  # ✅ KST 시간용
 
 import streamlit as st
 import pandas as pd
@@ -19,6 +20,11 @@ import matplotlib.pyplot as plt
 # =============================
 LOGO_IMAGE = "images/pmang_logo.png"
 st.set_page_config(page_title="웹보드 VOC 대시보드", page_icon=LOGO_IMAGE, layout="wide")
+
+# KST 시간 헬퍼
+FMT = "%Y-%m-%d %H:%M:%S"
+def now_kst():
+    return datetime.now(ZoneInfo("Asia/Seoul"))
 
 # =============================
 # 1) 유틸 (이미지, URL/키 정규화)
@@ -62,10 +68,14 @@ def normalize_sa_info(sa: dict) -> dict:
 # 2) 로그인(OIDC) & 권한
 # =============================
 def require_login():
-    if not st.user.is_logged_in:
+    if not getattr(st, "user", None) or not getattr(st.user, "is_logged_in", False):
         st.title("🔐 로그인 필요")
         st.info("Google 계정으로 로그인 후 이용할 수 있습니다.")
-        st.button("Google 계정으로 로그인", on_click=st.login, use_container_width=True)
+        # Streamlit Cloud OIDC
+        if hasattr(st, "login"):
+            st.button("Google 계정으로 로그인", on_click=st.login, use_container_width=True)
+        else:
+            st.warning("로그인 기능이 제공되지 않는 런타임입니다. Streamlit Cloud에서 실행하세요.")
         st.stop()
 
 def current_user():
@@ -79,6 +89,25 @@ def current_user():
 # =============================
 # 3) Google Sheets 클라이언트/시트
 # =============================
+def get_sheet_id() -> str:
+    """
+    SHEET_ID 를 다음 우선순위로 탐색:
+    1) st.secrets["SHEET_ID"] (루트)
+    2) st.secrets["gcp_service_account"]["SHEET_ID"] (테이블 내부)
+    """
+    try:
+        if "SHEET_ID" in st.secrets:
+            return st.secrets["SHEET_ID"]
+    except Exception:
+        pass
+    try:
+        gsa = st.secrets.get("gcp_service_account", {})
+        if isinstance(gsa, dict):
+            return gsa.get("SHEET_ID", "")
+    except Exception:
+        pass
+    return ""
+
 @st.cache_resource
 def get_gspread_client():
     try:
@@ -140,7 +169,7 @@ def submit_access_request(spreadsheet_id: str, email: str, name: str):
     if not df.empty and (df["email"].str.lower() == email.lower()).any():
         st.info("이미 요청되었거나 등록된 이메일입니다.")
         return
-    ws.append_row([email, name, datetime.now().strftime("%Y-%m-%d %H:%M:%S"), "pending", ""])
+    ws.append_row([email, name, now_kst().strftime(FMT), "pending", ""])  # ✅ KST
     st.success("접근 요청 완료! 관리자의 승인을 기다려주세요.")
     st.cache_data.clear()
 
@@ -151,7 +180,7 @@ def approve_user(spreadsheet_id: str, email: str):
     ws = get_or_create_user_mgmt_worksheet(ss)
     cell = ws.find(email)
     ws.update_cell(cell.row, 4, "approved")
-    ws.update_cell(cell.row, 5, datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+    ws.update_cell(cell.row, 5, now_kst().strftime(FMT))  # ✅ KST
     st.toast(f"{email} 승인 완료")
     st.cache_data.clear()
     st.rerun()
@@ -346,7 +375,8 @@ def main():
     me = current_user()
     if not me["email"]:
         st.error("구글 계정 이메일을 가져오지 못했습니다. 다시 로그인해 주세요.")
-        st.button("로그아웃", on_click=st.logout)
+        if hasattr(st, "logout"):
+            st.button("로그아웃", on_click=st.logout)
         st.stop()
 
     # 사이드 헤더
@@ -361,13 +391,16 @@ def main():
         st.title("📊 웹보드 VOC 대시보드")
 
     st.sidebar.success(f"로그인: {me['name']} ({me['email']})")
-    admin_email = st.secrets["app"].get("admin_email", "")
-    is_admin = (me["email"].lower() == admin_email.lower())
+
+    # 다중 어드민 지원
+    raw_admins = st.secrets.get("app", {}).get("admin_email", "")
+    admin_emails = [e.strip().lower() for e in re.split(r"[;,]", raw_admins) if e.strip()]
+    is_admin = me["email"].lower() in admin_emails
 
     # 6-2) 스프레드시트 ID
-    spreadsheet_id = st.secrets["gcp_service_account"].get("SHEET_ID", "")
+    spreadsheet_id = get_sheet_id()
     if not spreadsheet_id:
-        st.error("Secrets의 gcp_service_account.SHEET_ID 가 비어 있습니다.")
+        st.error("Secrets의 SHEET_ID 가 비어 있습니다. (루트 또는 [gcp_service_account] 내부)")
         st.stop()
 
     # 6-3) 접근 권한 확인
@@ -376,7 +409,8 @@ def main():
         st.warning("이 페이지 접근 권한이 없습니다. 아래 버튼으로 접근을 요청해 주세요.")
         if st.button("접근 요청", use_container_width=True):
             submit_access_request(spreadsheet_id, me["email"], me["name"] or me["email"].split("@")[0])
-        st.button("로그아웃", on_click=st.logout)
+        if hasattr(st, "logout"):
+            st.button("로그아웃", on_click=st.logout)
         st.stop()
 
     # 6-4) VOC 데이터 로딩
@@ -465,7 +499,7 @@ def main():
         st.markdown("---")
         st.subheader("기간 선택")
         if filtered.empty:
-            date_range = (datetime.now().date() - timedelta(days=6), datetime.now().date())
+            date_range = (now_kst().date() - timedelta(days=6), now_kst().date())  # ✅ KST 기준 표기
             st.warning("선택된 조건 데이터가 없습니다. 기간은 최근 7일로 표기됩니다.")
         else:
             min_d = filtered["날짜_dt"].min().date()
@@ -488,7 +522,8 @@ def main():
 
     if filtered.empty or not isinstance(date_range, (list, tuple)) or len(date_range) != 2:
         st.warning("표시할 데이터가 없습니다. 필터/기간을 조정하세요.")
-        st.sidebar.button("로그아웃", on_click=st.logout)
+        if hasattr(st, "logout"):
+            st.sidebar.button("로그아웃", on_click=st.logout)
         # 어드민 탭은 데이터 없어도 보일 수 있게 아래에서 처리
     else:
         start_dt = pd.to_datetime(date_range[0])
@@ -539,7 +574,7 @@ def main():
                         show_df = disp.rename(columns={'플랫폼': '구분', '문의내용_요약': '문의 내용'})
                         st.download_button("📥 CSV 다운로드",
                                            data=disp.to_csv(index=False).encode("utf-8-sig"),
-                                           file_name=f"voc_category_{datetime.now().strftime('%Y%m%d')}.csv",
+                                           file_name=f"voc_category_{now_kst().strftime('%Y%m%d')}.csv",  # ✅ KST
                                            mime="text/csv")
                         st.dataframe(show_df[["구분","날짜","게임","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보"]],
                                      use_container_width=True, height=500)
@@ -571,11 +606,11 @@ def main():
                             st.header("관련 VOC 목록")
                             st.download_button("📥 검색 결과 다운로드",
                                                data=r.to_csv(index=False).encode("utf-8-sig"),
-                                               file_name=f"voc_search_{keyword}_{datetime.now().strftime('%Y%m%d')}.csv",
+                                               file_name=f"voc_search_{keyword}_{now_kst().strftime('%Y%m%d')}.csv",  # ✅ KST
                                                mime="text/csv")
-                            disp_r = r.rename(columns={'플랫폼':'구분','문의내용_요약':'문의 내용'})
-                            st.dataframe(disp_r[["구분","날짜","게임","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]],
-                                         use_container_width=True, height=400)
+                        disp_r = r.rename(columns={'플랫폼':'구분','문의내용_요약':'문의 내용'})
+                        st.dataframe(disp_r[["구분","날짜","게임","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]],
+                                     use_container_width=True, height=400)
                         with st.container(border=True):
                             st.header("연관 키워드 워드클라우드")
                             generate_wordcloud(r["문의내용"])
@@ -615,7 +650,8 @@ def main():
                         revoke_user(spreadsheet_id, r["email"])
 
     # 6-8) 푸터 & 로그아웃
-    st.sidebar.button("로그아웃", on_click=st.logout)
+    if hasattr(st, "logout"):
+        st.sidebar.button("로그아웃", on_click=st.logout)
     st.markdown("---")
     logo_b64 = get_image_as_base64(LOGO_IMAGE)
     if logo_b64:

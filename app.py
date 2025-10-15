@@ -43,9 +43,7 @@ def normalize_sa_info(sa: dict) -> dict:
     # URL 3개 정규화
     sa["auth_uri"]  = _pure_url(sa.get("auth_uri", "")) or "https://accounts.google.com/o/oauth2/auth"
     sa["token_uri"] = _pure_url(sa.get("token_uri", "")) or "https://oauth2.googleapis.com/token"
-    sa["auth_provider_x509_cert_url"] = _pure_url(
-        sa.get("auth_provider_x509_cert_url", "")
-    ) or "https://www.googleapis.com/oauth2/v1/certs"
+    sa["auth_provider_x509_cert_url"] = _pure_url(sa.get("auth_provider_x509_cert_url", "")) or "https://www.googleapis.com/oauth2/v1/certs"
     # client_x509_cert_url 재생성(마크다운 흔적 방지)
     client_email = sa.get("client_email", "")
     if client_email:
@@ -61,19 +59,29 @@ def normalize_sa_info(sa: dict) -> dict:
 # =============================
 # 2) 로그인(OIDC) & 권한
 # =============================
+def _has_login_api() -> bool:
+    return hasattr(st, "login") and callable(st.login)
+
 def require_login():
-    if not st.user.is_logged_in:
-        st.title("🔐 로그인 필요")
-        st.info("Google 계정으로 로그인 후 이용할 수 있습니다.")
+    """is_logged_in 속성 없이 안전하게 로그인 판별."""
+    email = getattr(getattr(st, "user", object()), "email", None)
+    if email:
+        return  # 로그인된 상태
+
+    st.title("🔐 로그인 필요")
+    st.info("Google 계정으로 로그인 후 이용할 수 있습니다.")
+    if _has_login_api():
         st.button("Google 계정으로 로그인", on_click=st.login, use_container_width=True)
-        st.stop()
+    else:
+        st.warning("로그인 API를 사용할 수 없습니다. 관리자에게 문의해 주세요.")
+    st.stop()
 
 def current_user():
-    # Streamlit 1.42 내장 사용자 컨텍스트
+    # Streamlit Cloud OIDC: st.user.email / st.user.name / st.user.sub 만 신뢰
     return {
-        "name": getattr(st.user, "name", "") or "",
-        "email": getattr(st.user, "email", "") or "",
-        "sub": getattr(st.user, "sub", "") or "",
+        "name": getattr(getattr(st, "user", object()), "name", "") or "",
+        "email": getattr(getattr(st, "user", object()), "email", "") or "",
+        "sub": getattr(getattr(st, "user", object()), "sub", "") or "",
     }
 
 # =============================
@@ -91,7 +99,7 @@ def get_gspread_client():
         creds = service_account.Credentials.from_service_account_info(sa, scopes=scopes)
         return gspread.authorize(creds)
     except Exception as e:
-        st.error("Google 인증 실패: Secrets의 gcp_service_account 구성을 확인하세요.")
+        st.error("Google 인증 실패: Secrets의 [gcp_service_account] 구성을 확인하세요.")
         st.exception(e)
         return None
 
@@ -172,6 +180,19 @@ def is_approved(df_users: pd.DataFrame, email: str) -> bool:
         return False
     row = df_users.loc[df_users["email"].str.lower() == (email or "").lower()]
     return (not row.empty) and (row.iloc[0]["status"] == "approved")
+
+def ensure_admin_in_sheet(spreadsheet_id: str, email: str, name: str):
+    """관리자가 시트에서 실수로 삭제돼도 로그인 시 자동 복구."""
+    ss = open_sheet(spreadsheet_id)
+    if not ss:
+        return
+    ws = get_or_create_user_mgmt_worksheet(ss)
+    df = fetch_users_table(spreadsheet_id)
+    row = df.loc[df["email"].str.lower() == email.lower()]
+    if row.empty:
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        ws.append_row([email, name or email.split("@")[0], now, "approved", now])
+        st.cache_data.clear()
 
 # =============================
 # 4) 대시보드: 데이터 처리 함수
@@ -346,7 +367,8 @@ def main():
     me = current_user()
     if not me["email"]:
         st.error("구글 계정 이메일을 가져오지 못했습니다. 다시 로그인해 주세요.")
-        st.button("로그아웃", on_click=st.logout)
+        if _has_login_api():
+            st.button("로그아웃", on_click=st.logout)
         st.stop()
 
     # 사이드 헤더
@@ -361,14 +383,30 @@ def main():
         st.title("📊 웹보드 VOC 대시보드")
 
     st.sidebar.success(f"로그인: {me['name']} ({me['email']})")
-    admin_email = st.secrets["app"].get("admin_email", "")
-    is_admin = (me["email"].lower() == admin_email.lower())
 
-    # 6-2) 스프레드시트 ID
-    spreadsheet_id = st.secrets["gcp_service_account"].get("SHEET_ID", "")
+    # --- 관리자 판별 (다중 이메일 지원) ---
+    raw_admins = (
+        st.secrets["app"].get("admin_emails")  # 배열/문자열 모두 지원
+        or st.secrets["app"].get("admin_email", "")
+    )
+    if isinstance(raw_admins, list):
+        admin_set = {e.strip().lower() for e in raw_admins if isinstance(e, str)}
+    else:
+        admin_set = {e.strip().lower() for e in re.split(r"[;,]", str(raw_admins)) if e.strip()}
+    is_admin = me["email"].lower() in admin_set
+
+    # 6-2) 스프레드시트 ID (gcp_service_account.SHEET_ID 우선, 없으면 루트 SHEET_ID)
+    spreadsheet_id = (
+        st.secrets.get("gcp_service_account", {}).get("SHEET_ID")
+        or st.secrets.get("SHEET_ID", "")
+    )
     if not spreadsheet_id:
-        st.error("Secrets의 gcp_service_account.SHEET_ID 가 비어 있습니다.")
+        st.error("Secrets의 SHEET_ID 가 비어 있습니다. ([gcp_service_account].SHEET_ID 또는 루트 SHEET_ID 중 하나 필수)")
         st.stop()
+
+    # 관리자는 로그인하면 자동으로 시트에 approved 행을 보장
+    if is_admin:
+        ensure_admin_in_sheet(spreadsheet_id, me["email"], me["name"])
 
     # 6-3) 접근 권한 확인
     users_df = fetch_users_table(spreadsheet_id)
@@ -376,7 +414,8 @@ def main():
         st.warning("이 페이지 접근 권한이 없습니다. 아래 버튼으로 접근을 요청해 주세요.")
         if st.button("접근 요청", use_container_width=True):
             submit_access_request(spreadsheet_id, me["email"], me["name"] or me["email"].split("@")[0])
-        st.button("로그아웃", on_click=st.logout)
+        if _has_login_api():
+            st.button("로그아웃", on_click=st.logout)
         st.stop()
 
     # 6-4) VOC 데이터 로딩
@@ -488,8 +527,8 @@ def main():
 
     if filtered.empty or not isinstance(date_range, (list, tuple)) or len(date_range) != 2:
         st.warning("표시할 데이터가 없습니다. 필터/기간을 조정하세요.")
-        st.sidebar.button("로그아웃", on_click=st.logout)
-        # 어드민 탭은 데이터 없어도 보일 수 있게 아래에서 처리
+        if _has_login_api():
+            st.sidebar.button("로그아웃", on_click=st.logout)
     else:
         start_dt = pd.to_datetime(date_range[0])
         end_dt = pd.to_datetime(date_range[1])
@@ -597,7 +636,7 @@ def main():
                     c1.write(f"**{r['email']}**")
                     c2.write(r.get("name",""))
                     c3.write(r.get("request_date",""))
-                    if c4.button("승인", key=f"approve_{r['email']}"):
+                    if c4.button("승인", key=f"approve_{r['email']}"]:
                         approve_user(spreadsheet_id, r["email"])
 
         with tab_members:
@@ -615,7 +654,8 @@ def main():
                         revoke_user(spreadsheet_id, r["email"])
 
     # 6-8) 푸터 & 로그아웃
-    st.sidebar.button("로그아웃", on_click=st.logout)
+    if _has_login_api():
+        st.sidebar.button("로그아웃", on_click=st.logout)
     st.markdown("---")
     logo_b64 = get_image_as_base64(LOGO_IMAGE)
     if logo_b64:

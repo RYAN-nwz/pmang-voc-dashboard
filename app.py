@@ -385,7 +385,6 @@ def main():
         st.title("📊 웹보드 VOC 대시보드")
 
     st.sidebar.success(f"로그인: {me['name']} ({me['email']})")
-    admin_email = st.secrets["app"].get("admin_email", "")
     admin_email = st.secrets.get("app", {}).get("admin_email", "")
     is_admin = (me["email"].lower() == admin_email.lower())
 
@@ -406,21 +405,20 @@ def main():
 
     # 6-4) VOC 데이터 로딩
     voc_df = load_voc_data(spreadsheet_id)
-
+    
     # 6-5) 사이드바 필터
     with st.sidebar:
         st.markdown("---")
-
+        
         # [수정 2] 기간 선택 메뉴를 상단으로 이동
         st.subheader("📅 기간 선택")
-
+        
         # [수정 1] voc_df 로딩 후 필터링 로직을 수행하도록 수정
         if voc_df.empty:
             st.warning("VOC 데이터가 없습니다.")
             filtered = pd.DataFrame()
             date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
         else:
-            # 6-7) 필터 적용 (Sidebar 내부로 이동)
             game_filters = {
                 "뉴맞고": ["뉴맞고 (전체)", "뉴맞고 MOB", "뉴맞고 PC", "뉴맞고 for kakao"],
                 "섯다": ["섯다 (전체)", "섯다 MOB", "섯다 PC", "섯다 for kakao"],
@@ -456,7 +454,7 @@ def main():
                 st.session_state.select_all = all_groups and all_solo
 
             selected = [opt for opt in all_child if st.session_state.get(opt, False)]
-
+            
             # [수정 1] 필터링 로직을 date_range 정의 앞으로 이동
             if not selected:
                 filtered = pd.DataFrame()
@@ -479,7 +477,7 @@ def main():
                     filtered = voc_df[mask].copy()
                 else:
                     filtered = pd.DataFrame()
-
+            
             # 6-6) 기간 선택
             if filtered.empty:
                 date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
@@ -499,7 +497,7 @@ def main():
 
                 if "date_range" not in st.session_state:
                     set_range(7)
-
+                
                 current_range = st.session_state.get("date_range")
                 # [수정 1] 날짜 범위 유효성 검사 강화
                 if not (isinstance(current_range, (list, tuple)) and len(current_range) == 2 and current_range[0] >= min_d and current_range[1] <= max_d):
@@ -519,7 +517,7 @@ def main():
                     else:
                         st.checkbox(opts[0], key=opts[0], on_change=update_master_checkbox)
 
-
+    
     # 6-8) 날짜 필터 최종 적용
     if filtered.empty or not isinstance(date_range, (list, tuple)) or len(date_range) != 2:
         st.warning("표시할 데이터가 없습니다. 필터/기간을 조정하세요.")
@@ -548,27 +546,14 @@ def main():
                     st.plotly_chart(create_donut_chart(view_df, "주요 카테고리 TOP 5"), use_container_width=True)
 
             st.markdown("---")
-
-            # [수정 3] 탭 전환 문제 해결
-            query_params = st.query_params.to_dict()
-            default_tab = "search" if query_params.get("tab") == "search" else "main"
             
-            tabs = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색"])
+            # [수정 3] 탭 전환 문제 해결
             query_params = st.query_params
-
+            
             # 탭 순서를 동적으로 정하지 않고, 세션 상태로 활성화할 탭을 관리
             if "active_tab" not in st.session_state:
                 st.session_state.active_tab = "main"
-                
-            if submitted: # 검색어가 있든 없든, 검색 버튼이 눌리면
-                st.session_state.active_tab = "search"
-                st.session_state.last_search_keyword = keyword
-                
-            # 쿼리 파라미터로 탭 상태 동기화 (페이지 새로고침 시)
-            if query_params.get("tab") == "search" and not submitted:
-                 st.session_state.active_tab = "search"
-
-            active_tab_index = 1 if st.session_state.active_tab == "search" else 0
+            
             # URL 쿼리 파라미터가 'search'이면 세션 상태를 'search'로 변경
             if query_params.get("tab") == "search":
                 st.session_state.active_tab = "search"
@@ -576,22 +561,11 @@ def main():
 
             # 탭 생성
             tab_main, tab_search = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색"])
-
-            # TODO: Streamlit 1.38+ 에서는 st.tabs(..., default_index=...) 지원, 
-            # 그 전 버전에서는 이 방식이 최선이 아닐 수 있음.
-            # 현재 코드는 탭 순서를 고정하고, 탭 내부의 로직을 조건부로 실행
+            
             # 탭 활성화를 위해 탭을 변수에 할당하지 않고, st.session_state를 사용
             # (Streamlit 1.38+ 에서는 st.tabs(..., default_index=...) 지원)
             # 현재 방식: 탭 순서를 고정하고, 탭 내부의 로직을 조건부로 실행
             # (st.tabs는 프로그래밍 방식으로 탭을 변경하는 것을 직접 지원하지 않음)
-            # -> 사용자가 제공한 코드는 탭을 동적으로 재생성하는 방식이었음. 그 방식을 유지.
-
-            if st.session_state.active_tab == "search":
-                tab_search, tab_main = st.tabs(["🔍 키워드 검색", "📊 카테고리 분석"])
-            else:
-                tab_main, tab_search = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색"])
-
-
             
             # [수정 3] 탭 순서를 고정하고, 탭 내부 로직을 그대로 실행 (st.form 사용 시 탭 전환 로직 변경)
             
@@ -626,7 +600,7 @@ def main():
 
             with tab_search:
                 st.header("🔍 키워드 검색")
-
+                
                 # [수정 3] 탭 유지를 위해 st.form과 쿼리 파라미터 사용
                 with st.form(key="search_form"):
                     c1, c2 = st.columns([5,1])
@@ -635,10 +609,7 @@ def main():
                     with c2:
                         st.write(""); st.write("")
                         submitted = st.form_submit_button("검색", use_container_width=True)
-                        if submitted:
-                            st.session_state.active_tab = "search"
-                            st.session_state.last_search_keyword = keyword
-
+                
                 # [수정 4] 다중 키워드 검색 안내
                 st.caption("여러 키워드는 콤마(,)로 구분하여 검색할 수 있습니다. (예: 환불,결제 → '환불' 또는 '결제'가 포함된 항목 검색)")
 
@@ -649,8 +620,7 @@ def main():
                     st.rerun() # 폼 제출 시 즉시 새로고침하여 탭 상태 반영
 
                 last_keyword = st.session_state.get("last_search_keyword", "")
-
-                if last_keyword and (submitted or st.session_state.active_tab == "search"):
+                
                 # 탭이 'search'일 때만 검색 결과 표시
                 if st.session_state.active_tab == "search" and last_keyword:
                     keywords = [re.escape(k.strip()) for k in last_keyword.split(",") if k.strip()]
@@ -660,13 +630,13 @@ def main():
                             view_df["상담제목"].str.contains(search_regex, na=False, case=False, regex=True) |
                             view_df["검색용_문의내용"].str.contains(search_regex, na=False, case=False, regex=True)
                         ].copy()
-
+                        
                         if r.empty:
                             st.warning(f"'{last_keyword}' 키워드 결과 없음")
                         else:
                             st.success(f"'{last_keyword}' 포함 VOC: {len(r)} 건")
                             r['문의내용_요약'] = r['문의내용_요약'].apply(mask_phone_number)
-
+                            
                             with st.container(border=True):
                                 st.header("검색 결과 추이")
                                 st.plotly_chart(create_trend_chart(r, date_range, f"'{last_keyword}' 일자별 발생 추이"),
@@ -735,4 +705,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-~

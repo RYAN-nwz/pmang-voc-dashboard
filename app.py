@@ -5,8 +5,6 @@ import base64
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 from urllib.parse import quote as _urlquote
-import smtplib # [추가] 이메일 발송
-from email.mime.text import MIMEText # [추가] 이메일 발송
 
 import streamlit as st
 import pandas as pd
@@ -23,39 +21,11 @@ import matplotlib.pyplot as plt
 LOGO_IMAGE = "images/pmang_logo.png"
 st.set_page_config(page_title="웹보드 VOC 대시보드", page_icon=LOGO_IMAGE, layout="wide")
 
-KST = ZoneInfo("Asia/Seoul") # [수정] 한국 시간대
-DEFAULT_SHEET_ID = "1rgR21yUBtKSJKE4KYdBvoZzDU-0jZ_wLb6Tqc_zS7RM"
+KST = ZoneInfo("Asia/Seoul")
 
 # =============================
-# 1) 유틸 (이메일, 이미지, URL/키 정규화)
+# 1) 유틸 (이미지, URL/키 정규화)
 # =============================
-
-# [추가] 이메일 발송 기능
-def send_email(to_addr: str, subject: str, body: str):
-    """지정된 주소로 이메일을 발송합니다."""
-    try:
-        # Secrets에서 이메일 정보 가져오기
-        smtp_server = st.secrets["email"]["SMTP_SERVER"]
-        smtp_port = st.secrets["email"]["SMTP_PORT"]
-        smtp_user = st.secrets["email"]["SMTP_USER"] # 보내는 사람 이메일
-        smtp_pass = st.secrets["email"]["SMTP_PASSWORD"] # Google 앱 비밀번호
-        
-        msg = MIMEText(body, 'html') # [수정] HTML 포맷으로 발송
-        msg['Subject'] = subject
-        msg['From'] = smtp_user
-        msg['To'] = to_addr
-
-        with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
-            server.login(smtp_user, smtp_pass)
-            server.sendmail(smtp_user, to_addr, msg.as_string())
-        st.toast(f"📧 {to_addr} 님에게 알림 메일을 발송했습니다.")
-        
-    except KeyError:
-        st.warning("📧 이메일 발송 실패: Secrets에 'email' 관련 설정이 없습니다. (로컬 테스트)")
-    except Exception as e:
-        st.warning(f"📧 이메일 발송 실패: {e}")
-
-
 def get_image_as_base64(path: str):
     if os.path.exists(path):
         with open(path, "rb") as f:
@@ -88,7 +58,6 @@ def normalize_sa_info(sa: dict) -> dict:
     return sa
 
 def now_kst_str():
-    """현재 KST 시간을 문자열로 반환합니다."""
     return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
 
 def get_sheet_id() -> str:
@@ -96,7 +65,7 @@ def get_sheet_id() -> str:
     sid = st.secrets.get("SHEET_ID", "")
     if not sid:
         sid = st.secrets.get("gcp_service_account", {}).get("SHEET_ID", "")
-    return sid or DEFAULT_SHEET_ID
+    return sid
 
 # =============================
 # 2) 로그인(OIDC) & 권한
@@ -111,10 +80,12 @@ def require_login():
     if not is_logged_in:
         st.title("🔐 로그인 필요")
         st.info("Google 계정으로 로그인 후 이용할 수 있습니다.")
+        # Cloud OIDC 로그인 버튼
         st.button("Google 계정으로 로그인", on_click=st.login, use_container_width=True)
         st.stop()
 
 def current_user():
+    # Streamlit 1.42 내장 사용자 컨텍스트 - 안전 접근
     def _g(obj, key, default=""):
         try:
             return getattr(obj, key, default) or default
@@ -181,7 +152,7 @@ def fetch_users_table(spreadsheet_id: str) -> pd.DataFrame:
         st.exception(e)
         return pd.DataFrame(columns=["email","name","request_date","status","approved_date"])
 
-def submit_access_request(spreadsheet_id: str, email: str, name: str, admin_email: str):
+def submit_access_request(spreadsheet_id: str, email: str, name: str):
     ss = open_sheet(spreadsheet_id)
     if not ss:
         return
@@ -190,48 +161,20 @@ def submit_access_request(spreadsheet_id: str, email: str, name: str, admin_emai
     if not df.empty and (df["email"].str.lower() == email.lower()).any():
         st.info("이미 요청되었거나 등록된 이메일입니다.")
         return
-    
-    request_time = now_kst_str() # [수정] KST 시간 사용
-    ws.append_row([email, name, request_time, "pending", ""])
+    ws.append_row([email, name, now_kst_str(), "pending", ""])
     st.success("접근 요청 완료! 관리자의 승인을 기다려주세요.")
     st.cache_data.clear()
-    
-    # [추가] 어드민에게 이메일 알림 발송
-    send_email(
-        to_addr=admin_email,
-        subject=f"[VOC 대시보드] 새 접근 요청: {name}",
-        body=f"""
-        <p>새로운 사용자가 VOC 대시보드 접근 권한을 요청했습니다.</p>
-        <ul>
-            <li><b>요청자:</b> {name}</li>
-            <li><b>이메일:</b> {email}</li>
-            <li><b>요청 시간:</b> {request_time} (KST)</li>
-        </ul>
-        <p>대시보드의 '어드민 멤버 관리' 탭에서 승인해주세요.</p>
-        """
-    )
 
-def approve_user(spreadsheet_id: str, email: str, name: str):
+def approve_user(spreadsheet_id: str, email: str):
     ss = open_sheet(spreadsheet_id)
     if not ss:
         return
     ws = get_or_create_user_mgmt_worksheet(ss)
     cell = ws.find(email)
     ws.update_cell(cell.row, 4, "approved")
-    ws.update_cell(cell.row, 5, now_kst_str()) # [수정] KST 시간 사용
+    ws.update_cell(cell.row, 5, now_kst_str())
     st.toast(f"{email} 승인 완료")
     st.cache_data.clear()
-    
-    # [추가] 요청자에게 승인 완료 이메일 발송
-    send_email(
-        to_addr=email,
-        subject="[VOC 대시보드] 접근 요청이 승인되었습니다.",
-        body=f"""
-        <p>안녕하세요, {name}님.</p>
-        <p>요청하신 웹보드 VOC 대시보드 접근 권한이 승인되었습니다.</p>
-        <p>지금 바로 대시보드에 접속하여 VOC 현황을 확인하실 수 있습니다.</p>
-        """
-    )
     st.rerun()
 
 def revoke_user(spreadsheet_id: str, email: str):
@@ -347,10 +290,6 @@ def load_voc_data(spreadsheet_id: str) -> pd.DataFrame:
         df["플랫폼"] = df["접수 카테고리"].apply(classify_platform)
         df["날짜_dt"] = pd.to_datetime(df["날짜"], format="%y%m%d", errors="coerce")
         df = df.dropna(subset=["날짜_dt"])
-        
-        # [수정] 시간대(KST) 정보 추가
-        df['날짜_dt'] = df['날짜_dt'].dt.tz_localize(KST)
-        
         df["L1 태그"] = df["L2 태그"].map(L2_TO_L1_MAPPING).fillna("기타")
         df["GSN(USN)"] = df.apply(extract_gsn_usn, axis=1)
         df["기기정보"] = df.apply(extract_device_info, axis=1)
@@ -382,8 +321,8 @@ def create_trend_chart(data, date_range, title):
     fig.update_layout(xaxis_title="", yaxis_title="건수", height=300)
     return fig
 
-def create_donut_chart(data, title, group_by='L2 태그'):
-    counts = data[group_by].value_counts()
+def create_donut_chart(data, title):
+    counts = data["L2 태그"].value_counts()
     if len(counts) > 5:
         top4 = counts.nlargest(4)
         others = counts.iloc[4:].sum()
@@ -460,24 +399,25 @@ def main():
     if not (is_admin or is_approved(users_df, me["email"])):
         st.warning("이 페이지 접근 권한이 없습니다. 아래 버튼으로 접근을 요청해 주세요.")
         if st.button("접근 요청", use_container_width=True):
-            submit_access_request(spreadsheet_id, me["email"], me["name"] or me["email"].split("@")[0], admin_email)
-        st.sidebar.button("로그아웃", on_click=st.logout) 
+            submit_access_request(spreadsheet_id, me["email"], me["name"] or me["email"].split("@")[0])
+        st.sidebar.button("로그아웃", on_click=st.logout) # [수정 1] 로그아웃 버튼 위치
         st.stop()
 
     # 6-4) VOC 데이터 로딩
     voc_df = load_voc_data(spreadsheet_id)
     
-    filtered = pd.DataFrame()
-    date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
-
     # 6-5) 사이드바 필터
     with st.sidebar:
         st.markdown("---")
         
+        # [수정 2] 기간 선택 메뉴를 상단으로 이동
         st.subheader("📅 기간 선택")
         
+        # [수정 1] voc_df 로딩 후 필터링 로직을 수행하도록 수정
         if voc_df.empty:
             st.warning("VOC 데이터가 없습니다.")
+            filtered = pd.DataFrame()
+            date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
         else:
             game_filters = {
                 "뉴맞고": ["뉴맞고 (전체)", "뉴맞고 MOB", "뉴맞고 PC", "뉴맞고 for kakao"],
@@ -515,6 +455,7 @@ def main():
 
             selected = [opt for opt in all_child if st.session_state.get(opt, False)]
             
+            # [수정 1] 필터링 로직을 date_range 정의 앞으로 이동
             if not selected:
                 filtered = pd.DataFrame()
             else:
@@ -537,6 +478,7 @@ def main():
                 else:
                     filtered = pd.DataFrame()
             
+            # 6-6) 기간 선택
             if filtered.empty:
                 date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
                 st.warning("선택된 조건 데이터가 없습니다. 기간은 최근 7일로 표기됩니다.")
@@ -557,6 +499,7 @@ def main():
                     set_range(7)
                 
                 current_range = st.session_state.get("date_range")
+                # [수정 1] 날짜 범위 유효성 검사 강화
                 if not (isinstance(current_range, (list, tuple)) and len(current_range) == 2 and current_range[0] >= min_d and current_range[1] <= max_d):
                     set_range(7) 
 
@@ -581,7 +524,7 @@ def main():
     else:
         start_dt = pd.to_datetime(date_range[0])
         end_dt = pd.to_datetime(date_range[1])
-        view_df = filtered[(filtered["날짜_dt"].dt.date >= start_dt) & (filtered["날짜_dt"].dt.date <= end_dt)].copy()
+        view_df = filtered[(filtered["날짜_dt"] >= start_dt) & (filtered["날짜_dt"] <= end_dt)].copy()
 
         if view_df.empty:
             st.warning("선택하신 조건에 해당하는 데이터가 없습니다.")
@@ -593,55 +536,57 @@ def main():
                 period_days = (date_range[1] - date_range[0]).days + 1
                 prev_start = date_range[0] - timedelta(days=period_days)
                 prev_end   = date_range[1] - timedelta(days=period_days)
-                prev_df = filtered[(filtered["날짜_dt"].dt.date >= prev_start) & (filtered["날짜_dt"].dt.date <= prev_end)]
+                prev_df = filtered[(filtered["날짜_dt"] >= pd.to_datetime(prev_start)) & (filtered["날짜_dt"] <= pd.to_datetime(prev_end))]
                 delta = len(view_df) - len(prev_df)
 
                 col1, col2 = st.columns([1, 2])
                 with col1:
                     st.metric("총 VOC 건수", f"{len(view_df)} 건", f"{delta} 건 (이전 동기간 대비)")
                 with col2:
-                    st.plotly_chart(create_donut_chart(view_df, "주요 L2 카테고리 TOP 5"), use_container_width=True)
+                    st.plotly_chart(create_donut_chart(view_df, "주요 카테고리 TOP 5"), use_container_width=True)
 
             st.markdown("---")
             
+            # [수정 3] 탭 전환 문제 해결
+            query_params = st.query_params
+            
+            # 탭 순서를 동적으로 정하지 않고, 세션 상태로 활성화할 탭을 관리
             if "active_tab" not in st.session_state:
                 st.session_state.active_tab = "main"
             
-            query_params = st.query_params
+            # URL 쿼리 파라미터가 'search'이면 세션 상태를 'search'로 변경
             if query_params.get("tab") == "search":
                 st.session_state.active_tab = "search"
-                st.query_params.clear()
+                st.query_params.clear() # 처리 후 쿼리 파라미터 제거
 
-            # [수정] 탭 순서를 고정
-            tab_main, tab_search, tab_payment = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색", "💳 결제/인증 리포트"])
-
+            # 탭 생성
+            tab_main, tab_search = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색"])
+            
+            # 탭 활성화를 위해 탭을 변수에 할당하지 않고, st.session_state를 사용
+            # (Streamlit 1.38+ 에서는 st.tabs(..., default_index=...) 지원)
+            # 현재 방식: 탭 순서를 고정하고, 탭 내부의 로직을 조건부로 실행
+            # (st.tabs는 프로그래밍 방식으로 탭을 변경하는 것을 직접 지원하지 않음)
+            
+            # [수정 3] 탭 순서를 고정하고, 탭 내부 로직을 그대로 실행 (st.form 사용 시 탭 전환 로직 변경)
+            
             with tab_main:
-                if st.session_state.active_tab != "main":
-                    st.session_state.active_tab = "main"
-                    st.session_state.last_search_keyword = "" 
-                
                 c1, c2 = st.columns(2)
                 with c1:
                     st.plotly_chart(create_trend_chart(view_df, date_range, "일자별 VOC 발생 추이"), use_container_width=True)
                 with c2:
-                    # [추가] L1 대분류 파이 차트
-                    st.plotly_chart(create_donut_chart(view_df, "주요 L1 카테고리", group_by='L1 태그'), use_container_width=True)
+                    l2_counts = view_df["L2 태그"].value_counts().nlargest(10).sort_values(ascending=True)
+                    fig_l2 = px.bar(l2_counts, x=l2_counts.values, y=l2_counts.index, orientation='h',
+                                    title="<b>태그별 현황 TOP 10</b>", labels={'x': '건수', 'y': '태그'}, text_auto=True)
+                    fig_l2.update_layout(height=300)
+                    st.plotly_chart(fig_l2, use_container_width=True)
 
                 with st.container(border=True):
-                    st.header("📑 VOC 원본 데이터 (L2 태그 기준)")
+                    st.header("📑 VOC 원본 데이터")
                     top5 = view_df["L2 태그"].value_counts().nlargest(5)
                     all_cats = sorted(view_df["L2 태그"].unique())
-                    
-                    c1, c2 = st.columns([2, 1])
-                    with c1:
-                        selected_cats = st.multiselect("L2 태그 필터:", options=all_cats, default=top5.index.tolist())
-                    with c2:
-                        # [추가] 감성 필터
-                        sentiment_options = ['긍정', '부정', '중립']
-                        selected_sentiments = st.multiselect("감성 필터:", options=sentiment_options, default=sentiment_options)
-
-                    if selected_cats and selected_sentiments:
-                        disp = view_df[view_df["L2 태그"].isin(selected_cats) & view_df['감성'].isin(selected_sentiments)].copy()
+                    selected_cats = st.multiselect("카테고리 선택:", options=all_cats, default=top5.index.tolist())
+                    if selected_cats:
+                        disp = view_df[view_df["L2 태그"].isin(selected_cats)].copy()
                         disp["문의내용_요약"] = disp["문의내용_요약"].apply(mask_phone_number)
                         show_df = disp.rename(columns={'플랫폼': '구분', '문의내용_요약': '문의 내용'})
                         st.download_button(
@@ -650,16 +595,13 @@ def main():
                             file_name=f"voc_category_{datetime.now(KST).strftime('%Y%m%d')}.csv",
                             mime="text/csv"
                         )
-                        st.dataframe(show_df[["구분","날짜","게임","L1 태그","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]],
+                        st.dataframe(show_df[["구분","날짜","게임","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보"]],
                                      use_container_width=True, height=500)
 
             with tab_search:
-                if st.session_state.active_tab != "search":
-                    st.session_state.active_tab = "search"
-                    st.rerun()
-
                 st.header("🔍 키워드 검색")
                 
+                # [수정 3] 탭 유지를 위해 st.form과 쿼리 파라미터 사용
                 with st.form(key="search_form"):
                     c1, c2 = st.columns([5,1])
                     with c1:
@@ -668,16 +610,19 @@ def main():
                         st.write(""); st.write("")
                         submitted = st.form_submit_button("검색", use_container_width=True)
                 
+                # [수정 4] 다중 키워드 검색 안내
                 st.caption("여러 키워드는 콤마(,)로 구분하여 검색할 수 있습니다. (예: 환불,결제 → '환불' 또는 '결제'가 포함된 항목 검색)")
 
+                # 폼이 제출되었을 때만 세션 상태 업데이트 및 쿼리 파라미터 설정
                 if submitted:
                     st.session_state.last_search_keyword = keyword
-                    st.query_params["tab"] = "search"
-                    st.rerun() 
+                    st.query_params["tab"] = "search" # URL에 탭 정보 추가
+                    st.rerun() # 폼 제출 시 즉시 새로고침하여 탭 상태 반영
 
                 last_keyword = st.session_state.get("last_search_keyword", "")
                 
-                if last_keyword: 
+                # 탭이 'search'일 때만 검색 결과 표시
+                if st.session_state.active_tab == "search" and last_keyword:
                     keywords = [re.escape(k.strip()) for k in last_keyword.split(",") if k.strip()]
                     if keywords:
                         search_regex = "|".join(keywords)
@@ -710,37 +655,6 @@ def main():
                             with st.container(border=True):
                                 st.header("연관 키워드 워드클라우드")
                                 generate_wordcloud(r["문의내용"])
-            
-            # [추가] 결제/인증 탭
-            with tab_payment:
-                if st.session_state.active_tab != "payment":
-                    st.session_state.active_tab = "payment"
-                    st.session_state.last_search_keyword = "" 
-                
-                st.header("💳 결제/인증 리포트")
-                st.info("이 탭은 '계정'(로그인/인증) 및 '재화/결제'와 관련된 VOC만 필터링하여 보여줍니다.")
-                
-                payment_auth_df = view_df[view_df['L1 태그'].isin(['계정', '재화/결제'])].copy()
-                
-                if payment_auth_df.empty:
-                    st.warning("해당 기간에 결제 또는 인증 관련 VOC가 없습니다.")
-                else:
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.plotly_chart(create_trend_chart(payment_auth_df, date_range, "결제/인증 관련 VOC 발생 추이"), use_container_width=True)
-                    with c2:
-                        l2_counts_payment = payment_auth_df["L2 태그"].value_counts().nlargest(10).sort_values(ascending=True)
-                        fig_l2_payment = px.bar(l2_counts_payment, x=l2_counts_payment.values, y=l2_counts_payment.index, orientation='h',
-                                        title="<b>결제/인증 태그 현황 TOP 10</b>", labels={'x': '건수', 'y': '태그'}, text_auto=True)
-                        fig_l2_payment.update_layout(height=300)
-                        st.plotly_chart(fig_l2_payment, use_container_width=True)
-                    
-                    with st.container(border=True):
-                        st.header("📑 관련 VOC 원본 데이터")
-                        disp_payment = payment_auth_df.rename(columns={'플랫폼': '구분', '문의내용_요약': '문의 내용'})
-                        st.dataframe(disp_payment[["구분","날짜","게임","L1 태그","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]],
-                                             use_container_width=True, height=500)
-
 
     # 6-7) 어드민 멤버 관리(항상 하단, 관리자만 노출)
     if is_admin:
@@ -760,7 +674,7 @@ def main():
                     c2.write(r.get("name",""))
                     c3.write(r.get("request_date",""))
                     if c4.button("승인", key=f"approve_{r['email']}"):
-                        approve_user(spreadsheet_id, r["email"], r.get("name",""))
+                        approve_user(spreadsheet_id, r["email"])
 
         with tab_members:
             approved = users_df_latest[users_df_latest["status"] == "approved"]
@@ -791,4 +705,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

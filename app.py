@@ -409,110 +409,120 @@ def main():
     # 6-5) 사이드바 필터
     with st.sidebar:
         st.markdown("---")
-        st.subheader("필터")
-        game_filters = {
-            "뉴맞고": ["뉴맞고 (전체)", "뉴맞고 MOB", "뉴맞고 PC", "뉴맞고 for kakao"],
-            "섯다": ["섯다 (전체)", "섯다 MOB", "섯다 PC", "섯다 for kakao"],
-            "포커": ["포커 (전체)", "포커 MOB", "포커 PC", "포커 for kakao"],
-            "쇼다운홀덤": ["쇼다운홀덤 (전체)", "쇼다운홀덤 MOB", "쇼다운홀덤 PC"],
-            "뉴베가스": ["뉴베가스 (전체)", "뉴베가스 MOB", "뉴베가스 PC"],
-            "기타": ["기타"],
-        }
-        all_options = [opt for sub in game_filters.values() for opt in sub]
-        all_child = [opt for g, opts in game_filters.items() for opt in (opts[1:] if "(전체)" in opts[0] else opts)]
+        
+        # [수정 2] 기간 선택 메뉴를 상단으로 이동
+        st.subheader("📅 기간 선택")
+        
+        # 6-6) 필터 적용 & 기간 선택
+        if voc_df.empty:
+            filtered = pd.DataFrame()
+        else:
+            game_filters = {
+                "뉴맞고": ["뉴맞고 (전체)", "뉴맞고 MOB", "뉴맞고 PC", "뉴맞고 for kakao"],
+                "섯다": ["섯다 (전체)", "섯다 MOB", "섯다 PC", "섯다 for kakao"],
+                "포커": ["포커 (전체)", "포커 MOB", "포커 PC", "포커 for kakao"],
+                "쇼다운홀덤": ["쇼다운홀덤 (전체)", "쇼다운홀덤 MOB", "쇼다운홀덤 PC"],
+                "뉴베가스": ["뉴베가스 (전체)", "뉴베가스 MOB", "뉴베가스 PC"],
+                "기타": ["기타"],
+            }
+            all_options = [opt for sub in game_filters.values() for opt in sub]
+            all_child = [opt for g, opts in game_filters.items() for opt in (opts[1:] if "(전체)" in opts[0] else opts)]
 
-        if 'filters_initialized' not in st.session_state:
-            st.session_state.filters_initialized = True
-            for opt in all_options:
-                st.session_state[opt] = True
-            st.session_state.select_all = True
+            if 'filters_initialized' not in st.session_state:
+                st.session_state.filters_initialized = True
+                for opt in all_options:
+                    st.session_state[opt] = True
+                st.session_state.select_all = True
 
-        def master_toggle():
-            val = st.session_state.get("select_all", False)
-            for opt in all_options:
-                st.session_state[opt] = val
+            def master_toggle():
+                val = st.session_state.get("select_all", False)
+                for opt in all_options: st.session_state[opt] = val
+            def group_toggle(game_key):
+                group_all = st.session_state.get(f"{game_key} (전체)", False)
+                for opt in game_filters[game_key][1:]: st.session_state[opt] = group_all
+                update_master_checkbox()
+            def child_toggle(game_key):
+                if len(game_filters[game_key]) > 1:
+                    all_children = all(st.session_state.get(opt, False) for opt in game_filters[game_key][1:])
+                    st.session_state[f"{game_key} (전체)"] = all_children
+                update_master_checkbox()
+            def update_master_checkbox():
+                all_groups = all(st.session_state.get(f"{g} (전체)", False) for g, opts in game_filters.items() if len(opts)>1)
+                all_solo = all(st.session_state.get(opts[0], False) for g, opts in game_filters.items() if len(opts)==1)
+                st.session_state.select_all = all_groups and all_solo
 
-        def group_toggle(game_key):
-            group_all = st.session_state.get(f"{game_key} (전체)", False)
-            for opt in game_filters[game_key][1:]:
-                st.session_state[opt] = group_all
-            update_master_checkbox()
+            if filtered.empty:
+                date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
+                st.warning("선택된 조건 데이터가 없습니다. 기간은 최근 7일로 표기됩니다.")
+            else:
+                min_d = filtered["날짜_dt"].min().date()
+                max_d = filtered["날짜_dt"].max().date()
 
-        def child_toggle(game_key):
-            if len(game_filters[game_key]) > 1:
-                all_children = all(st.session_state.get(opt, False) for opt in game_filters[game_key][1:])
-                st.session_state[f"{game_key} (전체)"] = all_children
-            update_master_checkbox()
+                def set_range(days):
+                    start = max_d - timedelta(days=days-1)
+                    if start < min_d: start = min_d
+                    st.session_state.date_range = (start, max_d)
 
-        def update_master_checkbox():
-            all_groups = all(st.session_state.get(f"{g} (전체)", False) for g, opts in game_filters.items() if len(opts)>1)
-            all_solo   = all(st.session_state.get(opts[0], False) for g, opts in game_filters.items() if len(opts)==1)
-            st.session_state.select_all = all_groups and all_solo
+                col1, col2 = st.columns(2)
+                with col1: st.button("최근 7일", on_click=set_range, args=(7,), use_container_width=True)
+                with col2: st.button("최근 30일", on_click=set_range, args=(30,), use_container_width=True)
 
-        st.checkbox("전체", key="select_all", on_change=master_toggle)
+                if "date_range" not in st.session_state:
+                    set_range(7)
+                
+                # [수정 1] 날짜 범위 유효성 검사 추가
+                current_range = st.session_state.get("date_range")
+                if not (isinstance(current_range, (list, tuple)) and len(current_range) == 2 and current_range[0] >= min_d and current_range[1] <= max_d):
+                    set_range(7) # 범위가 유효하지 않으면 7일로 리셋
 
-        for game, opts in game_filters.items():
-            with st.expander(game, expanded=True):
-                if len(opts) > 1 and "(전체)" in opts[0]:
-                    st.checkbox(opts[0], key=opts[0], on_change=group_toggle, args=(game,))
-                    for opt in opts[1:]:
-                        st.checkbox(opt, key=opt, on_change=child_toggle, args=(game,))
-                else:
-                    st.checkbox(opts[0], key=opts[0], on_change=update_master_checkbox)
+                date_range = st.date_input("조회 기간:", key="date_range", min_value=min_d, max_value=max_d)
 
-        selected = [opt for opt in all_child if st.session_state.get(opt, False)]
+            st.markdown("---")
+            st.subheader("🕹️ 게임 및 플랫폼 선택")
+            st.checkbox("전체", key="select_all", on_change=master_toggle)
+            for game, opts in game_filters.items():
+                with st.expander(game, expanded=True):
+                    if len(opts) > 1 and "(전체)" in opts[0]:
+                        st.checkbox(opts[0], key=opts[0], on_change=group_toggle, args=(game,))
+                        for opt in opts[1:]:
+                            st.checkbox(opt, key=opt, on_change=child_toggle, args=(game,))
+                    else:
+                        st.checkbox(opts[0], key=opts[0], on_change=update_master_checkbox)
 
-    # 6-6) 필터 적용 & 기간 선택
-    if voc_df.empty or not selected:
+            selected = [opt for opt in all_child if st.session_state.get(opt, False)]
+    
+    # 6-7) 필터 적용
+    if voc_df.empty:
         filtered = pd.DataFrame()
     else:
-        conditions = []
-        for opt in selected:
-            if " for kakao" in opt:
-                game_name = opt.replace(" for kakao", "")
-                conditions.append((voc_df["게임"] == game_name) & (voc_df["플랫폼"] == "for kakao"))
-            else:
-                parts = opt.rsplit(" ", 1)
-                game_name = parts[0]
-                platform = parts[1] if len(parts) > 1 else None
-                if platform:
-                    conditions.append((voc_df["게임"] == game_name) & (voc_df["플랫폼"] == platform))
-                else:
-                    conditions.append(voc_df["게임"] == game_name)
-        if conditions:
-            mask = pd.concat(conditions, axis=1).any(axis=1)
-            filtered = voc_df[mask].copy()
-        else:
+        if not selected:
             filtered = pd.DataFrame()
-
-    with st.sidebar:
-        st.markdown("---")
-        st.subheader("기간 선택")
-        if filtered.empty:
-            date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
-            st.warning("선택된 조건 데이터가 없습니다. 기간은 최근 7일로 표기됩니다.")
         else:
-            min_d = filtered["날짜_dt"].min().date()
-            max_d = filtered["날짜_dt"].max().date()
+            conditions = []
+            for opt in selected:
+                if " for kakao" in opt:
+                    game_name = opt.replace(" for kakao", "")
+                    conditions.append((voc_df["게임"] == game_name) & (voc_df["플랫폼"] == "for kakao"))
+                else:
+                    parts = opt.rsplit(" ", 1)
+                    game_name = parts[0]
+                    platform = parts[1] if len(parts) > 1 else None
+                    if platform:
+                        conditions.append((voc_df["게임"] == game_name) & (voc_df["플랫폼"] == platform))
+                    else:
+                        conditions.append(voc_df["게임"] == game_name)
+            if conditions:
+                mask = pd.concat(conditions, axis=1).any(axis=1)
+                filtered = voc_df[mask].copy()
+            else:
+                filtered = pd.DataFrame()
 
-            def set_range(days):
-                start = max_d - timedelta(days=days-1)
-                if start < min_d:
-                    start = min_d
-                st.session_state.date_range = (start, max_d)
 
-            col1, col2 = st.columns(2)
-            with col1: st.button("최근 7일", on_click=set_range, args=(7,), use_container_width=True)
-            with col2: st.button("최근 30일", on_click=set_range, args=(30,), use_container_width=True)
-
-            if "date_range" not in st.session_state:
-                set_range(7)
-
-            date_range = st.date_input("조회 기간:", key="date_range", min_value=min_d, max_value=max_d)
-
+    # 6-8) 날짜 필터 최종 적용
     if filtered.empty or not isinstance(date_range, (list, tuple)) or len(date_range) != 2:
         st.warning("표시할 데이터가 없습니다. 필터/기간을 조정하세요.")
-        st.sidebar.button("로그아웃", on_click=st.logout)
+        # [수정 1] 중복 로그아웃 버튼 제거
+        # st.sidebar.button("로그아웃", on_click=st.logout) 
     else:
         start_dt = pd.to_datetime(date_range[0])
         end_dt = pd.to_datetime(date_range[1])
@@ -538,7 +548,15 @@ def main():
                     st.plotly_chart(create_donut_chart(view_df, "주요 카테고리 TOP 5"), use_container_width=True)
 
             st.markdown("---")
-            tab_main, tab_search = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색"])
+            
+            # [수정 3] 탭 전환 문제 해결
+            query_params = st.query_params.to_dict()
+            default_tab = "search" if query_params.get("tab") == "search" else "main"
+            
+            if default_tab == "search":
+                tab_search, tab_main = st.tabs(["🔍 키워드 검색", "📊 카테고리 분석"])
+            else:
+                tab_main, tab_search = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색"])
 
             with tab_main:
                 c1, c2 = st.columns(2)
@@ -571,47 +589,66 @@ def main():
 
             with tab_search:
                 st.header("🔍 키워드 검색")
-                c1, c2 = st.columns([5,1])
-                with c1:
-                    keyword = st.text_input("검색 키워드:", placeholder="예: 환불, 튕김, 업데이트...")
-                with c2:
-                    st.write(""); st.write("")
-                    st.button("검색", use_container_width=True)
-                if keyword:
-                    r = view_df[
-                        view_df["상담제목"].str.contains(keyword, na=False, case=False) |
-                        view_df["검색용_문의내용"].str.contains(keyword, na=False, case=False)
-                    ].copy()
-                    if r.empty:
-                        st.warning(f"'{keyword}' 키워드 결과 없음")
-                    else:
-                        st.success(f"'{keyword}' 포함 VOC: {len(r)} 건")
-                        r['문의내용_요약'] = r['문의내용_요약'].apply(mask_phone_number)
-                        r['감성'] = r['감성']
-                        with st.container(border=True):
-                            st.header("검색 결과 추이")
-                            st.plotly_chart(create_trend_chart(r, date_range, f"'{keyword}' 일자별 발생 추이"),
-                                            use_container_width=True)
-                        with st.container(border=True):
-                            st.header("관련 VOC 목록")
-                            st.download_button(
-                                "📥 검색 결과 다운로드",
-                                data=r.to_csv(index=False).encode("utf-8-sig"),
-                                file_name=f"voc_search_{keyword}_{datetime.now(KST).strftime('%Y%m%d')}.csv",
-                                mime="text/csv"
-                            )
-                            disp_r = r.rename(columns={'플랫폼':'구분','문의내용_요약':'문의 내용'})
-                            st.dataframe(disp_r[["구분","날짜","게임","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]],
-                                         use_container_width=True, height=400)
-                        with st.container(border=True):
-                            st.header("연관 키워드 워드클라우드")
-                            generate_wordcloud(r["문의내용"])
+                
+                # [수정 3] 검색 버튼 클릭 시 탭 유지를 위해 st.query_params 사용
+                with st.form(key="search_form"):
+                    c1, c2 = st.columns([5,1])
+                    with c1:
+                        keyword = st.text_input("검색 키워드:", placeholder="예: 환불, 튕김, 업데이트...")
+                    with c2:
+                        st.write(""); st.write("")
+                        submitted = st.form_submit_button("검색", use_container_width=True)
+                        if submitted:
+                            st.query_params["tab"] = "search"
+                
+                # [수정 4] 다중 키워드 검색 (콤마로 구분, OR 검색)
+                st.caption("여러 키워드는 콤마(,)로 구분하여 검색할 수 있습니다. (예: 환불,결제 → '환불' 또는 '결제'가 포함된 항목 검색)")
+
+                # 쿼리 파라미터나 세션에서 마지막 검색어 가져오기
+                if submitted and keyword:
+                    st.session_state.last_search_keyword = keyword
+                
+                last_keyword = st.session_state.get("last_search_keyword", "")
+                
+                if last_keyword:
+                    keywords = [re.escape(k.strip()) for k in last_keyword.split(",") if k.strip()]
+                    if keywords:
+                        search_regex = "|".join(keywords)
+                        r = view_df[
+                            view_df["상담제목"].str.contains(search_regex, na=False, case=False, regex=True) |
+                            view_df["검색용_문의내용"].str.contains(search_regex, na=False, case=False, regex=True)
+                        ].copy()
+                        
+                        if r.empty:
+                            st.warning(f"'{last_keyword}' 키워드 결과 없음")
+                        else:
+                            st.success(f"'{last_keyword}' 포함 VOC: {len(r)} 건")
+                            r['문의내용_요약'] = r['문의내용_요약'].apply(mask_phone_number)
+                            # r['감성'] = r['감성'] # 감성 컬럼은 이미 load_voc_data에서 생성됨
+                            with st.container(border=True):
+                                st.header("검색 결과 추이")
+                                st.plotly_chart(create_trend_chart(r, date_range, f"'{last_keyword}' 일자별 발생 추이"),
+                                                use_container_width=True)
+                            with st.container(border=True):
+                                st.header("관련 VOC 목록")
+                                st.download_button(
+                                    "📥 검색 결과 다운로드",
+                                    data=r.to_csv(index=False).encode("utf-8-sig"),
+                                    file_name=f"voc_search_{last_keyword}_{datetime.now(KST).strftime('%Y%m%d')}.csv",
+                                    mime="text/csv"
+                                )
+                                disp_r = r.rename(columns={'플랫폼':'구분','문의내용_요약':'문의 내용'})
+                                st.dataframe(disp_r[["구분","날짜","게임","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]],
+                                             use_container_width=True, height=400)
+                            with st.container(border=True):
+                                st.header("연관 키워드 워드클라우드")
+                                generate_wordcloud(r["문의내용"])
 
     # 6-7) 어드민 멤버 관리(항상 하단, 관리자만 노출)
     if is_admin:
         st.markdown("---")
         st.subheader("🛡️ 어드민 멤버 관리 (관리자 전용)")
-        users_df = fetch_users_table(spreadsheet_id)
+        users_df = fetch_users_table(spreadsheet_id) # 최신 정보로 다시 로드
         tab_req, tab_members = st.tabs(["접근 요청 목록", "멤버 관리 목록"])
 
         with tab_req:
@@ -656,3 +693,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

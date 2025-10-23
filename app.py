@@ -406,7 +406,7 @@ def main():
     # 6-4) VOC 데이터 로딩
     voc_df = load_voc_data(spreadsheet_id)
     
-    # [수정 1] UnboundLocalError 수정을 위해 filtered 초기화
+    # [수정 1] UnboundLocalError 수정을 위해 filtered, date_range 초기화
     filtered = pd.DataFrame()
     date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
 
@@ -417,6 +417,7 @@ def main():
         # [수정 2] 기간 선택 메뉴를 상단으로 이동
         st.subheader("📅 기간 선택")
         
+        # [수정 1] voc_df 로딩 후 필터링 로직을 수행하도록 수정
         if voc_df.empty:
             st.warning("VOC 데이터가 없습니다.")
         else:
@@ -456,6 +457,7 @@ def main():
 
             selected = [opt for opt in all_child if st.session_state.get(opt, False)]
             
+            # [수정 1] 필터링 로직을 date_range 정의 앞으로 이동
             if not selected:
                 filtered = pd.DataFrame()
             else:
@@ -478,6 +480,7 @@ def main():
                 else:
                     filtered = pd.DataFrame()
             
+            # 6-6) 기간 선택
             if filtered.empty:
                 date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
                 st.warning("선택된 조건 데이터가 없습니다. 기간은 최근 7일로 표기됩니다.")
@@ -498,6 +501,7 @@ def main():
                     set_range(7)
                 
                 current_range = st.session_state.get("date_range")
+                # [수정 1] 날짜 범위 유효성 검사 강화
                 if not (isinstance(current_range, (list, tuple)) and len(current_range) == 2 and current_range[0] >= min_d and current_range[1] <= max_d):
                     set_range(7) 
 
@@ -548,20 +552,24 @@ def main():
             # [수정 3] 탭 전환 문제 해결
             query_params = st.query_params
             
+            # 세션 상태에 active_tab 초기화
             if "active_tab" not in st.session_state:
                 st.session_state.active_tab = "main"
             
+            # URL 쿼리 파라미터로 탭 상태 동기화 (페이지 새로고침 시)
             if query_params.get("tab") == "search":
                 st.session_state.active_tab = "search"
-                st.query_params.clear()
-
-            # [수정 3] 탭 순서를 동적으로 변경하여 활성 탭 제어
-            if st.session_state.active_tab == "search":
-                tab_search, tab_main = st.tabs(["🔍 키워드 검색", "📊 카테고리 분석"])
-            else:
-                tab_main, tab_search = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색"])
+                st.query_params.clear() # 처리 후 쿼리 파라미터 제거
+            
+            # 탭 생성 (순서 고정)
+            tab_main, tab_search = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색"])
 
             with tab_main:
+                # 탭을 클릭하면 active_tab 세션 상태 변경
+                if st.session_state.active_tab != "main":
+                    st.session_state.active_tab = "main"
+                    st.session_state.last_search_keyword = "" # 다른 탭으로 이동 시 검색어 초기화
+                
                 c1, c2 = st.columns(2)
                 with c1:
                     st.plotly_chart(create_trend_chart(view_df, date_range, "일자별 VOC 발생 추이"), use_container_width=True)
@@ -591,6 +599,11 @@ def main():
                                      use_container_width=True, height=500)
 
             with tab_search:
+                # 탭을 클릭하면 active_tab 세션 상태 변경
+                if st.session_state.active_tab != "search":
+                    st.session_state.active_tab = "search"
+                    st.rerun() # 탭 상태를 즉시 반영하기 위해 rerun
+
                 st.header("🔍 키워드 검색")
                 
                 with st.form(key="search_form"):
@@ -606,14 +619,12 @@ def main():
 
                 if submitted:
                     st.session_state.last_search_keyword = keyword
-                    st.session_state.active_tab = "search" # [수정 3] 폼 제출 시 active_tab 설정
                     st.query_params["tab"] = "search"
                     st.rerun() 
 
                 last_keyword = st.session_state.get("last_search_keyword", "")
                 
-                if st.session_state.active_tab == "search" and last_keyword:
-                    # [수정 3] 탭이 활성화 상태일 때만 검색 실행
+                if last_keyword: # 탭이 활성화 상태이고(위에서 처리됨), 마지막 검색어가 있으면
                     keywords = [re.escape(k.strip()) for k in last_keyword.split(",") if k.strip()]
                     if keywords:
                         search_regex = "|".join(keywords)

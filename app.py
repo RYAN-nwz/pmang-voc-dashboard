@@ -400,12 +400,12 @@ def main():
         st.warning("이 페이지 접근 권한이 없습니다. 아래 버튼으로 접근을 요청해 주세요.")
         if st.button("접근 요청", use_container_width=True):
             submit_access_request(spreadsheet_id, me["email"], me["name"] or me["email"].split("@")[0])
-        st.button("로그아웃", on_click=st.logout)
+        st.sidebar.button("로그아웃", on_click=st.logout) # [수정 1] 로그아웃 버튼 위치
         st.stop()
 
     # 6-4) VOC 데이터 로딩
     voc_df = load_voc_data(spreadsheet_id)
-
+    
     # 6-5) 사이드바 필터
     with st.sidebar:
         st.markdown("---")
@@ -413,10 +413,13 @@ def main():
         # [수정 2] 기간 선택 메뉴를 상단으로 이동
         st.subheader("📅 기간 선택")
         
-        # 6-6) 필터 적용 & 기간 선택
+        # [수정 1] voc_df 로딩 후 필터링 로직을 수행하도록 수정
         if voc_df.empty:
+            st.warning("VOC 데이터가 없습니다.")
             filtered = pd.DataFrame()
+            date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
         else:
+            # 6-7) 필터 적용 (Sidebar 내부로 이동)
             game_filters = {
                 "뉴맞고": ["뉴맞고 (전체)", "뉴맞고 MOB", "뉴맞고 PC", "뉴맞고 for kakao"],
                 "섯다": ["섯다 (전체)", "섯다 MOB", "섯다 PC", "섯다 for kakao"],
@@ -451,6 +454,31 @@ def main():
                 all_solo = all(st.session_state.get(opts[0], False) for g, opts in game_filters.items() if len(opts)==1)
                 st.session_state.select_all = all_groups and all_solo
 
+            selected = [opt for opt in all_child if st.session_state.get(opt, False)]
+            
+            if not selected:
+                filtered = pd.DataFrame()
+            else:
+                conditions = []
+                for opt in selected:
+                    if " for kakao" in opt:
+                        game_name = opt.replace(" for kakao", "")
+                        conditions.append((voc_df["게임"] == game_name) & (voc_df["플랫폼"] == "for kakao"))
+                    else:
+                        parts = opt.rsplit(" ", 1)
+                        game_name = parts[0]
+                        platform = parts[1] if len(parts) > 1 else None
+                        if platform:
+                            conditions.append((voc_df["게임"] == game_name) & (voc_df["플랫폼"] == platform))
+                        else:
+                            conditions.append(voc_df["게임"] == game_name)
+                if conditions:
+                    mask = pd.concat(conditions, axis=1).any(axis=1)
+                    filtered = voc_df[mask].copy()
+                else:
+                    filtered = pd.DataFrame()
+            
+            # 6-6) 기간 선택
             if filtered.empty:
                 date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
                 st.warning("선택된 조건 데이터가 없습니다. 기간은 최근 7일로 표기됩니다.")
@@ -470,10 +498,9 @@ def main():
                 if "date_range" not in st.session_state:
                     set_range(7)
                 
-                # [수정 1] 날짜 범위 유효성 검사 추가
                 current_range = st.session_state.get("date_range")
                 if not (isinstance(current_range, (list, tuple)) and len(current_range) == 2 and current_range[0] >= min_d and current_range[1] <= max_d):
-                    set_range(7) # 범위가 유효하지 않으면 7일로 리셋
+                    set_range(7) 
 
                 date_range = st.date_input("조회 기간:", key="date_range", min_value=min_d, max_value=max_d)
 
@@ -489,40 +516,10 @@ def main():
                     else:
                         st.checkbox(opts[0], key=opts[0], on_change=update_master_checkbox)
 
-            selected = [opt for opt in all_child if st.session_state.get(opt, False)]
     
-    # 6-7) 필터 적용
-    if voc_df.empty:
-        filtered = pd.DataFrame()
-    else:
-        if not selected:
-            filtered = pd.DataFrame()
-        else:
-            conditions = []
-            for opt in selected:
-                if " for kakao" in opt:
-                    game_name = opt.replace(" for kakao", "")
-                    conditions.append((voc_df["게임"] == game_name) & (voc_df["플랫폼"] == "for kakao"))
-                else:
-                    parts = opt.rsplit(" ", 1)
-                    game_name = parts[0]
-                    platform = parts[1] if len(parts) > 1 else None
-                    if platform:
-                        conditions.append((voc_df["게임"] == game_name) & (voc_df["플랫폼"] == platform))
-                    else:
-                        conditions.append(voc_df["게임"] == game_name)
-            if conditions:
-                mask = pd.concat(conditions, axis=1).any(axis=1)
-                filtered = voc_df[mask].copy()
-            else:
-                filtered = pd.DataFrame()
-
-
     # 6-8) 날짜 필터 최종 적용
     if filtered.empty or not isinstance(date_range, (list, tuple)) or len(date_range) != 2:
         st.warning("표시할 데이터가 없습니다. 필터/기간을 조정하세요.")
-        # [수정 1] 중복 로그아웃 버튼 제거
-        # st.sidebar.button("로그아웃", on_click=st.logout) 
     else:
         start_dt = pd.to_datetime(date_range[0])
         end_dt = pd.to_datetime(date_range[1])
@@ -553,10 +550,33 @@ def main():
             query_params = st.query_params.to_dict()
             default_tab = "search" if query_params.get("tab") == "search" else "main"
             
-            if default_tab == "search":
+            tabs = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색"])
+            
+            # 탭 순서를 동적으로 정하지 않고, 세션 상태로 활성화할 탭을 관리
+            if "active_tab" not in st.session_state:
+                st.session_state.active_tab = "main"
+                
+            if submitted: # 검색어가 있든 없든, 검색 버튼이 눌리면
+                st.session_state.active_tab = "search"
+                st.session_state.last_search_keyword = keyword
+                
+            # 쿼리 파라미터로 탭 상태 동기화 (페이지 새로고침 시)
+            if query_params.get("tab") == "search" and not submitted:
+                 st.session_state.active_tab = "search"
+            
+            active_tab_index = 1 if st.session_state.active_tab == "search" else 0
+            
+            # TODO: Streamlit 1.38+ 에서는 st.tabs(..., default_index=...) 지원, 
+            # 그 전 버전에서는 이 방식이 최선이 아닐 수 있음.
+            # 현재 코드는 탭 순서를 고정하고, 탭 내부의 로직을 조건부로 실행
+            # (st.tabs는 프로그래밍 방식으로 탭을 변경하는 것을 직접 지원하지 않음)
+            # -> 사용자가 제공한 코드는 탭을 동적으로 재생성하는 방식이었음. 그 방식을 유지.
+
+            if st.session_state.active_tab == "search":
                 tab_search, tab_main = st.tabs(["🔍 키워드 검색", "📊 카테고리 분석"])
             else:
                 tab_main, tab_search = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색"])
+
 
             with tab_main:
                 c1, c2 = st.columns(2)
@@ -590,27 +610,22 @@ def main():
             with tab_search:
                 st.header("🔍 키워드 검색")
                 
-                # [수정 3] 검색 버튼 클릭 시 탭 유지를 위해 st.query_params 사용
                 with st.form(key="search_form"):
                     c1, c2 = st.columns([5,1])
                     with c1:
-                        keyword = st.text_input("검색 키워드:", placeholder="예: 환불, 튕김, 업데이트...")
+                        keyword = st.text_input("검색 키워드:", value=st.session_state.get("last_search_keyword", ""), placeholder="예: 환불, 튕김, 업데이트...")
                     with c2:
                         st.write(""); st.write("")
                         submitted = st.form_submit_button("검색", use_container_width=True)
                         if submitted:
-                            st.query_params["tab"] = "search"
+                            st.session_state.active_tab = "search"
+                            st.session_state.last_search_keyword = keyword
                 
-                # [수정 4] 다중 키워드 검색 (콤마로 구분, OR 검색)
                 st.caption("여러 키워드는 콤마(,)로 구분하여 검색할 수 있습니다. (예: 환불,결제 → '환불' 또는 '결제'가 포함된 항목 검색)")
 
-                # 쿼리 파라미터나 세션에서 마지막 검색어 가져오기
-                if submitted and keyword:
-                    st.session_state.last_search_keyword = keyword
-                
                 last_keyword = st.session_state.get("last_search_keyword", "")
                 
-                if last_keyword:
+                if last_keyword and (submitted or st.session_state.active_tab == "search"):
                     keywords = [re.escape(k.strip()) for k in last_keyword.split(",") if k.strip()]
                     if keywords:
                         search_regex = "|".join(keywords)
@@ -624,7 +639,7 @@ def main():
                         else:
                             st.success(f"'{last_keyword}' 포함 VOC: {len(r)} 건")
                             r['문의내용_요약'] = r['문의내용_요약'].apply(mask_phone_number)
-                            # r['감성'] = r['감성'] # 감성 컬럼은 이미 load_voc_data에서 생성됨
+                            
                             with st.container(border=True):
                                 st.header("검색 결과 추이")
                                 st.plotly_chart(create_trend_chart(r, date_range, f"'{last_keyword}' 일자별 발생 추이"),
@@ -648,11 +663,11 @@ def main():
     if is_admin:
         st.markdown("---")
         st.subheader("🛡️ 어드민 멤버 관리 (관리자 전용)")
-        users_df = fetch_users_table(spreadsheet_id) # 최신 정보로 다시 로드
+        users_df_latest = fetch_users_table(spreadsheet_id) # 최신 정보로 다시 로드
         tab_req, tab_members = st.tabs(["접근 요청 목록", "멤버 관리 목록"])
 
         with tab_req:
-            pending = users_df[users_df["status"] == "pending"]
+            pending = users_df_latest[users_df_latest["status"] == "pending"]
             if pending.empty:
                 st.info("대기 중인 요청이 없습니다.")
             else:
@@ -665,7 +680,7 @@ def main():
                         approve_user(spreadsheet_id, r["email"])
 
         with tab_members:
-            approved = users_df[users_df["status"] == "approved"]
+            approved = users_df_latest[users_df_latest["status"] == "approved"]
             if approved.empty:
                 st.info("승인된 멤버가 없습니다.")
             else:

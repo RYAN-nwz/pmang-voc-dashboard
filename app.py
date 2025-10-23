@@ -400,12 +400,16 @@ def main():
         st.warning("이 페이지 접근 권한이 없습니다. 아래 버튼으로 접근을 요청해 주세요.")
         if st.button("접근 요청", use_container_width=True):
             submit_access_request(spreadsheet_id, me["email"], me["name"] or me["email"].split("@")[0])
-        st.sidebar.button("로그아웃", on_click=st.logout) # [수정 1] 로그아웃 버튼 위치
+        st.sidebar.button("로그아웃", on_click=st.logout)
         st.stop()
 
     # 6-4) VOC 데이터 로딩
     voc_df = load_voc_data(spreadsheet_id)
     
+    # [수정 1] UnboundLocalError 수정을 위해 filtered 초기화
+    filtered = pd.DataFrame()
+    date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
+
     # 6-5) 사이드바 필터
     with st.sidebar:
         st.markdown("---")
@@ -413,11 +417,8 @@ def main():
         # [수정 2] 기간 선택 메뉴를 상단으로 이동
         st.subheader("📅 기간 선택")
         
-        # [수정 1] voc_df 로딩 후 필터링 로직을 수행하도록 수정
         if voc_df.empty:
             st.warning("VOC 데이터가 없습니다.")
-            filtered = pd.DataFrame()
-            date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
         else:
             game_filters = {
                 "뉴맞고": ["뉴맞고 (전체)", "뉴맞고 MOB", "뉴맞고 PC", "뉴맞고 for kakao"],
@@ -455,7 +456,6 @@ def main():
 
             selected = [opt for opt in all_child if st.session_state.get(opt, False)]
             
-            # [수정 1] 필터링 로직을 date_range 정의 앞으로 이동
             if not selected:
                 filtered = pd.DataFrame()
             else:
@@ -478,7 +478,6 @@ def main():
                 else:
                     filtered = pd.DataFrame()
             
-            # 6-6) 기간 선택
             if filtered.empty:
                 date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
                 st.warning("선택된 조건 데이터가 없습니다. 기간은 최근 7일로 표기됩니다.")
@@ -499,7 +498,6 @@ def main():
                     set_range(7)
                 
                 current_range = st.session_state.get("date_range")
-                # [수정 1] 날짜 범위 유효성 검사 강화
                 if not (isinstance(current_range, (list, tuple)) and len(current_range) == 2 and current_range[0] >= min_d and current_range[1] <= max_d):
                     set_range(7) 
 
@@ -550,25 +548,19 @@ def main():
             # [수정 3] 탭 전환 문제 해결
             query_params = st.query_params
             
-            # 탭 순서를 동적으로 정하지 않고, 세션 상태로 활성화할 탭을 관리
             if "active_tab" not in st.session_state:
                 st.session_state.active_tab = "main"
             
-            # URL 쿼리 파라미터가 'search'이면 세션 상태를 'search'로 변경
             if query_params.get("tab") == "search":
                 st.session_state.active_tab = "search"
-                st.query_params.clear() # 처리 후 쿼리 파라미터 제거
+                st.query_params.clear()
 
-            # 탭 생성
-            tab_main, tab_search = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색"])
-            
-            # 탭 활성화를 위해 탭을 변수에 할당하지 않고, st.session_state를 사용
-            # (Streamlit 1.38+ 에서는 st.tabs(..., default_index=...) 지원)
-            # 현재 방식: 탭 순서를 고정하고, 탭 내부의 로직을 조건부로 실행
-            # (st.tabs는 프로그래밍 방식으로 탭을 변경하는 것을 직접 지원하지 않음)
-            
-            # [수정 3] 탭 순서를 고정하고, 탭 내부 로직을 그대로 실행 (st.form 사용 시 탭 전환 로직 변경)
-            
+            # [수정 3] 탭 순서를 동적으로 변경하여 활성 탭 제어
+            if st.session_state.active_tab == "search":
+                tab_search, tab_main = st.tabs(["🔍 키워드 검색", "📊 카테고리 분석"])
+            else:
+                tab_main, tab_search = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색"])
+
             with tab_main:
                 c1, c2 = st.columns(2)
                 with c1:
@@ -601,7 +593,6 @@ def main():
             with tab_search:
                 st.header("🔍 키워드 검색")
                 
-                # [수정 3] 탭 유지를 위해 st.form과 쿼리 파라미터 사용
                 with st.form(key="search_form"):
                     c1, c2 = st.columns([5,1])
                     with c1:
@@ -613,16 +604,16 @@ def main():
                 # [수정 4] 다중 키워드 검색 안내
                 st.caption("여러 키워드는 콤마(,)로 구분하여 검색할 수 있습니다. (예: 환불,결제 → '환불' 또는 '결제'가 포함된 항목 검색)")
 
-                # 폼이 제출되었을 때만 세션 상태 업데이트 및 쿼리 파라미터 설정
                 if submitted:
                     st.session_state.last_search_keyword = keyword
-                    st.query_params["tab"] = "search" # URL에 탭 정보 추가
-                    st.rerun() # 폼 제출 시 즉시 새로고침하여 탭 상태 반영
+                    st.session_state.active_tab = "search" # [수정 3] 폼 제출 시 active_tab 설정
+                    st.query_params["tab"] = "search"
+                    st.rerun() 
 
                 last_keyword = st.session_state.get("last_search_keyword", "")
                 
-                # 탭이 'search'일 때만 검색 결과 표시
                 if st.session_state.active_tab == "search" and last_keyword:
+                    # [수정 3] 탭이 활성화 상태일 때만 검색 실행
                     keywords = [re.escape(k.strip()) for k in last_keyword.split(",") if k.strip()]
                     if keywords:
                         search_regex = "|".join(keywords)

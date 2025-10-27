@@ -567,8 +567,6 @@ def main():
                 active_index = 3
             else: # "main"
                 active_index = 0
-
-            # [수정] 탭 순서를 고정하고, 탭 클릭 시 active_tab 상태를 변경하는 로직 추가
             
             tab_main, tab_search, tab_payment, *tab_admin_list = st.tabs(tabs)
 
@@ -625,7 +623,6 @@ def main():
 
                 last_keyword = st.session_state.get("last_search_keyword", "")
                 
-                # [수정] 탭 활성화 로직 변경 (URL 파라미터가 없어도 세션 상태로 활성화)
                 if st.session_state.active_tab == "search" and last_keyword:
                     keywords = [re.escape(k.strip()) for k in last_keyword.split(",") if k.strip()]
                     if keywords:
@@ -685,38 +682,38 @@ def main():
                         st.dataframe(disp_payment[["구분","날짜","게임","L1 태그","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]],
                                              use_container_width=True, height=500)
 
-    if is_admin and tab_admin_list:
-        with tab_admin_list[0]:
-            st.subheader("🛡️ 어드민 멤버 관리")
-            users_df_latest = fetch_users_table(spreadsheet_id) # 최신 정보로 다시 로드
-            tab_req, tab_members = st.tabs(["접근 요청 목록", "멤버 관리 목록"])
+            if is_admin and tab_admin_list:
+                with tab_admin_list[0]:
+                    st.subheader("🛡️ 어드민 멤버 관리")
+                    users_df_latest = fetch_users_table(spreadsheet_id) # 최신 정보로 다시 로드
+                    tab_req, tab_members = st.tabs(["접근 요청 목록", "멤버 관리 목록"])
 
-            with tab_req:
-                pending = users_df_latest[users_df_latest["status"] == "pending"]
-                if pending.empty:
-                    st.info("대기 중인 요청이 없습니다.")
-                else:
-                    for _, r in pending.iterrows():
-                        c1, c2, c3, c4 = st.columns([3,2,2,2])
-                        c1.write(f"**{r['email']}**")
-                        c2.write(r.get("name",""))
-                        c3.write(r.get("request_date",""))
-                        if c4.button("승인", key=f"approve_{r['email']}"):
-                            approve_user(spreadsheet_id, r["email"])
+                    with tab_req:
+                        pending = users_df_latest[users_df_latest["status"] == "pending"]
+                        if pending.empty:
+                            st.info("대기 중인 요청이 없습니다.")
+                        else:
+                            for _, r in pending.iterrows():
+                                c1, c2, c3, c4 = st.columns([3,2,2,2])
+                                c1.write(f"**{r['email']}**")
+                                c2.write(r.get("name",""))
+                                c3.write(r.get("request_date",""))
+                                if c4.button("승인", key=f"approve_{r['email']}"):
+                                    approve_user(spreadsheet_id, r["email"])
 
-            with tab_members:
-                approved = users_df_latest[users_df_latest["status"] == "approved"]
-                if approved.empty:
-                    st.info("승인된 멤버가 없습니다.")
-                else:
-                    for _, r in approved.iterrows():
-                        c1, c2, c3, c4, c5 = st.columns([3,2,2,2,1])
-                        c1.write(f"**{r['email']}**")
-                        c2.write(r.get("name",""))
-                        c3.write(r.get("request_date",""))
-                        c4.write(r.get("approved_date",""))
-                        if c5.button("🗑️", key=f"revoke_{r['email']}"):
-                            revoke_user(spreadsheet_id, r["email"])
+                    with tab_members:
+                        approved = users_df_latest[users_df_latest["status"] == "approved"]
+                        if approved.empty:
+                            st.info("승인된 멤버가 없습니다.")
+                        else:
+                            for _, r in approved.iterrows():
+                                c1, c2, c3, c4, c5 = st.columns([3,2,2,2,1])
+                                c1.write(f"**{r['email']}**")
+                                c2.write(r.get("name",""))
+                                c3.write(r.get("request_date",""))
+                                c4.write(r.get("approved_date",""))
+                                if c5.button("🗑️", key=f"revoke_{r['email']}"):
+                                    revoke_user(spreadsheet_id, r["email"])
 
     st.sidebar.button("로그아웃", on_click=st.logout)
     st.markdown("---")

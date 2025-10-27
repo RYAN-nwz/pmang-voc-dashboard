@@ -262,34 +262,61 @@ def classify_sentiment(text):
 
 @st.cache_data(ttl=600)
 def load_voc_data(spreadsheet_id: str) -> pd.DataFrame:
+    """
+    [수정] Google Sheets에서 '월별' 시트의 VOC 데이터를 불러옵니다.
+    최근 2개월치(이번 달, 지난 달) 데이터만 로드하여 성능을 최적화합니다.
+    """
     ss = open_sheet(spreadsheet_id)
     if not ss:
         return pd.DataFrame()
     try:
         all_data = []
-        for ws in ss.worksheets():
-            if ws.title.lower() in ["sheet1", "template", "mapping", "user_management"]:
+        
+        # [수정] '월별 시트' 아키텍처로 변경
+        today = datetime.now(KST)
+        current_month_str = today.strftime("%y-%m") # 예: 25-10
+        prev_month_date = today - timedelta(days=30) # 30일 전 날짜로 계산
+        prev_month_str = prev_month_date.strftime("%y-%m") # 예: 25-09
+        
+        # 중복 제거 (예: 10월 초)
+        sheets_to_load = list(set([current_month_str, prev_month_str]))
+        
+        st.sidebar.info(f"데이터 로딩 중... (대상: {', '.join(sheets_to_load)})")
+        
+        for sheet_title in sheets_to_load:
+            if sheet_title.lower() in ["sheet1", "template", "mapping", "user_management"]:
                 continue
             try:
+                ws = ss.worksheet(sheet_title) # 이름으로 시트 열기 시도
                 rows = ws.get_all_records()
                 if rows:
-                    for r in rows:
-                        r["날짜"] = ws.title
                     all_data.extend(rows)
-            except Exception:
+            except gspread.WorksheetNotFound:
+                st.sidebar.warning(f"'{sheet_title}' 시트 없음 (데이터 수집 전일 수 있음)")
+                continue # 해당 월의 시트가 아직 없으면 통과
+            except Exception as e:
+                st.warning(f"'{sheet_title}' 시트 로딩 중 오류: {e}")
                 continue
+        
         if not all_data:
             return pd.DataFrame()
+        
         df = pd.DataFrame(all_data)
-        required = ["접수 카테고리", "상담제목", "문의내용", "taglist"]
+        
+        # [수정] '날짜' 컬럼이 자동화 스크립트에서 이미 제공된다고 가정
+        required = ["접수 카테고리", "상담제목", "문의내용", "taglist", "날짜"]
         if not all(col in df.columns for col in required):
-            st.error(f"필수 컬럼 누락: {required}")
+            st.error(f"필수 컬럼 누락: {required}. 자동화 스크립트가 '날짜' 컬럼을 추가했는지 확인하세요.")
             return pd.DataFrame()
+            
         df = df.rename(columns={"taglist": "L2 태그"})
         df["게임"] = df["접수 카테고리"].apply(classify_game)
         df["플랫폼"] = df["접수 카테고리"].apply(classify_platform)
+        
+        # [수정] '날짜' 컬럼 형식이 YYMMDD로 저장되었다고 가정
         df["날짜_dt"] = pd.to_datetime(df["날짜"], format="%y%m%d", errors="coerce")
         df = df.dropna(subset=["날짜_dt"])
+        
         # [수정] KST 시간대 정보 추가 (날짜만 있는 데이터이므로 tz_localize 대신)
         df['날짜_dt'] = df['날짜_dt'].dt.tz_localize('UTC').dt.tz_convert(KST)
 
@@ -555,20 +582,19 @@ def main():
                 st.session_state.active_tab = "search"
                 st.query_params.clear()
 
-            tabs = ["📊 카테고리 분석", "🔍 키워드 검색", "💳 결제/인증 리포트"]
+            tabs = ["📊 카테고리 분석", "🔍 키워드 검색"] # [수정] 탭 목록
             if is_admin:
                 tabs.append("🛡️ 어드민 멤버 관리")
 
+            # [수정] 탭 활성화 인덱스 계산
             if st.session_state.active_tab == "search":
                 active_index = 1
-            elif st.session_state.active_tab == "payment":
-                active_index = 2
             elif st.session_state.active_tab == "admin" and is_admin:
-                active_index = 3
+                active_index = 2
             else: # "main"
                 active_index = 0
             
-            tab_main, tab_search, tab_payment, *tab_admin_list = st.tabs(tabs)
+            tab_main, tab_search, *tab_admin_list = st.tabs(tabs)
 
             with tab_main:
                 c1, c2 = st.columns(2)
@@ -657,31 +683,7 @@ def main():
                                 st.header("연관 키워드 워드클라우드")
                                 generate_wordcloud(r["문의내용"])
             
-            with tab_payment:
-                st.header("💳 결제/인증 리포트")
-                st.info("이 탭은 '계정'(로그인/인증) 및 '재화/결제'와 관련된 VOC만 필터링하여 보여줍니다.")
-                
-                payment_auth_df = view_df[view_df['L1 태그'].isin(['계정', '재화/결제'])].copy()
-                
-                if payment_auth_df.empty:
-                    st.warning("해당 기간에 결제 또는 인증 관련 VOC가 없습니다.")
-                else:
-                    c1, c2 = st.columns(2)
-                    with c1:
-                        st.plotly_chart(create_trend_chart(payment_auth_df, date_range, "결제/인증 관련 VOC 발생 추이"), use_container_width=True)
-                    with c2:
-                        l2_counts_payment = payment_auth_df["L2 태그"].value_counts().nlargest(10).sort_values(ascending=True)
-                        fig_l2_payment = px.bar(l2_counts_payment, x=l2_counts_payment.values, y=l2_counts_payment.index, orientation='h',
-                                        title="<b>결제/인증 태그 현황 TOP 10</b>", labels={'x': '건수', 'y': '태그'}, text_auto=True)
-                        fig_l2_payment.update_layout(height=300)
-                        st.plotly_chart(fig_l2_payment, use_container_width=True)
-                    
-                    with st.container(border=True):
-                        st.header("📑 관련 VOC 원본 데이터")
-                        disp_payment = payment_auth_df.rename(columns={'플랫폼': '구분', '문의내용_요약': '문의 내용'})
-                        st.dataframe(disp_payment[["구분","날짜","게임","L1 태그","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]],
-                                             use_container_width=True, height=500)
-
+            # [수정] 어드민 탭 로직 위치
             if is_admin and tab_admin_list:
                 with tab_admin_list[0]:
                     st.subheader("🛡️ 어드민 멤버 관리")

@@ -44,7 +44,7 @@ def normalize_sa_info(sa: dict) -> dict:
     """Secrets의 서비스계정 JSON을 정규화(마크다운 링크/줄바꿈)하여 반환."""
     sa = dict(sa or {})
     # URL 정규화
-    sa["auth_uri"]  = _pure_url(sa.get("auth_uri", "")) or "https://accounts.google.com/o/oauth2/auth"
+    sa["auth_uri"]  = _pure_url(sa.get("auth_uri", "")) or "https.://accounts.google.com/o/oauth2/auth"
     sa["token_uri"] = _pure_url(sa.get("token_uri", "")) or "https://oauth2.googleapis.com/token"
     sa["auth_provider_x509_cert_url"] = _pure_url(sa.get("auth_provider_x509_cert_url", "")) or "https://www.googleapis.com/oauth2/v1/certs"
     # client_x509_cert_url 재생성(마크다운 흔적 방지)
@@ -580,6 +580,9 @@ def main():
     
     if filtered.empty or not isinstance(date_range, (list, tuple)) or len(date_range) != 2:
         st.warning("표시할 데이터가 없습니다. 필터/기간을 조정하세요.")
+        # [수정] 탭 로직 밖으로 이동
+        is_admin_tab_visible = is_admin
+        tab_admin_list = []
     else:
         start_dt = pd.to_datetime(date_range[0]).date()
         end_dt = pd.to_datetime(date_range[1]).date()
@@ -606,22 +609,26 @@ def main():
 
             st.markdown("---")
             
-            query_params = st.query_params
-            
-            if "active_tab" not in st.session_state:
-                st.session_state.active_tab = "main"
-            
-            if query_params.get("tab") == "search":
-                st.session_state.active_tab = "search"
-                st.query_params.clear()
+        query_params = st.query_params
+        
+        if "active_tab" not in st.session_state:
+            st.session_state.active_tab = "main"
+        
+        if query_params.get("tab") == "search":
+            st.session_state.active_tab = "search"
+            st.query_params.clear()
 
-            tabs = ["📊 카테고리 분석", "🔍 키워드 검색", "💳 결제/인증 리포트"]
-            if is_admin:
-                tabs.append("🛡️ 어드민 멤버 관리")
-            
-            tab_main, tab_search, tab_payment, *tab_admin_list = st.tabs(tabs)
+        tabs = ["📊 카테고리 분석", "🔍 키워드 검색", "💳 결제/인증 리포트"]
+        if is_admin:
+            tabs.append("🛡️ 어드민 멤버 관리")
+        
+        tab_main, tab_search, tab_payment, *tab_admin_list = st.tabs(tabs)
+        is_admin_tab_visible = is_admin and tab_admin_list # 탭이 실제로 생성되었는지 확인
 
-            with tab_main:
+        with tab_main:
+            if view_df.empty:
+                st.warning("선택된 기간에 데이터가 없습니다.")
+            else:
                 # [수정] 탭 클릭 시 세션 상태 변경
                 if st.session_state.active_tab != "main":
                     st.session_state.active_tab = "main"
@@ -658,33 +665,36 @@ def main():
                         st.dataframe(show_df[["구분","날짜","게임","L1 태그","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]],
                                      use_container_width=True, height=500)
 
-            with tab_search:
-                # [수정] 탭 클릭 시 세션 상태 변경
-                if st.session_state.active_tab != "search":
-                    st.session_state.active_tab = "search"
-                    st.rerun() # 탭 상태를 즉시 반영하기 위해 rerun
+        with tab_search:
+            # [수정] 탭 클릭 시 세션 상태 변경
+            if st.session_state.active_tab != "search":
+                st.session_state.active_tab = "search"
+                st.rerun() # 탭 상태를 즉시 반영하기 위해 rerun
 
-                st.header("🔍 키워드 검색")
-                
-                with st.form(key="search_form"):
-                    c1, c2 = st.columns([5,1])
-                    with c1:
-                        keyword = st.text_input("검색 키워드:", value=st.session_state.get("last_search_keyword", ""), placeholder="예: 환불, 튕김, 업데이트...")
-                    with c2:
-                        st.write(""); st.write("")
-                        submitted = st.form_submit_button("검색", use_container_width=True)
-                
-                st.caption("여러 키워드는 콤마(,)로 구분하여 검색할 수 있습니다. (예: 환불,결제 → '환불' 또는 '결제'가 포함된 항목 검색)")
+            st.header("🔍 키워드 검색")
+            
+            with st.form(key="search_form"):
+                c1, c2 = st.columns([5,1])
+                with c1:
+                    keyword = st.text_input("검색 키워드:", value=st.session_state.get("last_search_keyword", ""), placeholder="예: 환불, 튕김, 업데이트...")
+                with c2:
+                    st.write(""); st.write("")
+                    submitted = st.form_submit_button("검색", use_container_width=True)
+            
+            st.caption("여러 키워드는 콤마(,)로 구분하여 검색할 수 있습니다. (예: 환불,결제 → '환불' 또는 '결제'가 포함된 항목 검색)")
 
-                if submitted:
-                    st.session_state.last_search_keyword = keyword
-                    st.session_state.active_tab = "search"
-                    st.query_params["tab"] = "search"
-                    st.rerun() 
+            if submitted:
+                st.session_state.last_search_keyword = keyword
+                st.session_state.active_tab = "search"
+                st.query_params["tab"] = "search"
+                st.rerun() 
 
-                last_keyword = st.session_state.get("last_search_keyword", "")
-                
-                if st.session_state.active_tab == "search" and last_keyword:
+            last_keyword = st.session_state.get("last_search_keyword", "")
+            
+            if st.session_state.active_tab == "search" and last_keyword:
+                if view_df.empty:
+                    st.warning("검색할 데이터가 없습니다. 필터/기간을 조정하세요.")
+                else:
                     keywords = [re.escape(k.strip()) for k in last_keyword.split(",") if k.strip()]
                     if keywords:
                         search_regex = "|".join(keywords)
@@ -717,8 +727,11 @@ def main():
                             with st.container(border=True):
                                 st.header("연관 키워드 워드클라우드")
                                 generate_wordcloud(r["문의내용"])
-            
-            with tab_payment:
+        
+        with tab_payment:
+            if view_df.empty:
+                st.warning("선택된 기간에 데이터가 없습니다.")
+            else:
                 # [수정] 탭 클릭 시 세션 상태 변경
                 if st.session_state.active_tab != "payment":
                     st.session_state.active_tab = "payment"
@@ -747,12 +760,11 @@ def main():
                         disp_payment = payment_auth_df.rename(columns={'플랫폼': '구분', '문의내용_요약': '문의 내용'})
                         st.dataframe(disp_payment[["구분","날짜","게임","L1 태그","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]],
                                              use_container_width=True, height=500)
-    
+
     # [수정] 어드민 탭 로직 위치 (데이터가 없어도 탭은 보여야 함)
     if is_admin:
         # [수정] 탭이 생성되지 않았을 경우(데이터가 없는 경우)에도 어드민 탭을 표시
         if not tab_admin_list:
-            # 탭이 3개만 생성된 경우 (데이터가 없는 경우), 4번째 탭으로 어드민 탭 생성
             tab_admin = st.tabs(["🛡️ 어드민 멤버 관리"])[0]
         else:
             tab_admin = tab_admin_list[0]

@@ -44,7 +44,7 @@ def normalize_sa_info(sa: dict) -> dict:
     """Secrets의 서비스계정 JSON을 정규화(마크다운 링크/줄바꿈)하여 반환."""
     sa = dict(sa or {})
     # URL 정규화
-    sa["auth_uri"]  = _pure_url(sa.get("auth_uri", "")) or "https://accounts.google.com/o/oauth2/auth"
+    sa["auth_uri"] = _pure_url(sa.get("auth_uri", "")) or "https://accounts.google.com/o/oauth2/auth"
     sa["token_uri"] = _pure_url(sa.get("token_uri", "")) or "https://oauth2.googleapis.com/token"
     sa["auth_provider_x509_cert_url"] = _pure_url(sa.get("auth_provider_x509_cert_url", "")) or "https://www.googleapis.com/oauth2/v1/certs"
     # client_x509_cert_url 재생성(마크다운 흔적 방지)
@@ -330,7 +330,7 @@ def create_donut_chart(data, title, group_by='L2 태그'): # [추가] group_by �
     if len(counts) > 5:
         top4 = counts.nlargest(4)
         others = counts.iloc[4:].sum()
-        chart_data = top4._append(pd.Series([others], index=["기타"]))
+        chart_data = pd.concat([top4, pd.Series([others], index=["기타"])])
     else:
         chart_data = counts
     fig = go.Figure(data=[go.Pie(labels=chart_data.index, values=chart_data.values, hole=.6, textinfo='label+percent', insidetextorientation='radial')])
@@ -410,8 +410,12 @@ def main():
     # 6-4) VOC 데이터 로딩
     voc_df = load_voc_data(spreadsheet_id)
     
+    # [수정] 'filtered'와 'date_range'를 기본값으로 초기화
     filtered = pd.DataFrame()
-    date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
+    # [수정] KST 기준으로 오늘 날짜 및 7일 전 날짜 계산
+    today_kst = datetime.now(KST).date()
+    seven_days_ago_kst = today_kst - timedelta(days=6)
+    date_range = (seven_days_ago_kst, today_kst)
 
     # 6-5) 사이드바 필터
     with st.sidebar:
@@ -455,7 +459,40 @@ def main():
                 all_groups = all(st.session_state.get(f"{g} (전체)", False) for g, opts in game_filters.items() if len(opts)>1)
                 all_solo = all(st.session_state.get(opts[0], False) for g, opts in game_filters.items() if len(opts)==1)
                 st.session_state.select_all = all_groups and all_solo
+            
+            # --- [수정] 필터링 로직을 사이드바 하단으로 이동 ---
+            
+            min_d = voc_df["날짜_dt"].min().date()
+            max_d = voc_df["날짜_dt"].max().date()
 
+            def set_range(days):
+                start = max_d - timedelta(days=days-1)
+                if start < min_d: start = min_d
+                st.session_state.date_range = (start, max_d)
+
+            col1, col2 = st.columns(2)
+            with col1: st.button("최근 7일", on_click=set_range, args=(7,), use_container_width=True)
+            with col2: st.button("최근 30일", on_click=set_range, args=(30,), use_container_width=True)
+
+            if "date_range" not in st.session_state:
+                set_range(7)
+            
+            # 날짜 입력 UI
+            date_range = st.date_input("조회 기간:", key="date_range", min_value=min_d, max_value=max_d)
+
+            st.markdown("---")
+            st.subheader("🕹️ 게임 및 플랫폼 선택")
+            st.checkbox("전체", key="select_all", on_change=master_toggle)
+            for game, opts in game_filters.items():
+                with st.expander(game, expanded=True):
+                    if len(opts) > 1 and "(전체)" in opts[0]:
+                        st.checkbox(opts[0], key=opts[0], on_change=group_toggle, args=(game,))
+                        for opt in opts[1:]:
+                            st.checkbox(opt, key=opt, on_change=child_toggle, args=(game,))
+                    else:
+                        st.checkbox(opts[0], key=opts[0], on_change=update_master_checkbox)
+
+            # --- [수정] 필터링 로직 실행 ---
             selected = [opt for opt in all_child if st.session_state.get(opt, False)]
             
             if not selected:
@@ -479,46 +516,9 @@ def main():
                     filtered = voc_df[mask].copy()
                 else:
                     filtered = pd.DataFrame()
-            
-            if filtered.empty:
-                date_range = (datetime.now(KST).date() - timedelta(days=6), datetime.now(KST).date())
-                st.warning("선택된 조건 데이터가 없습니다. 기간은 최근 7일로 표기됩니다.")
-            else:
-                min_d = filtered["날짜_dt"].min().date()
-                max_d = filtered["날짜_dt"].max().date()
 
-                def set_range(days):
-                    start = max_d - timedelta(days=days-1)
-                    if start < min_d: start = min_d
-                    st.session_state.date_range = (start, max_d)
-
-                col1, col2 = st.columns(2)
-                with col1: st.button("최근 7일", on_click=set_range, args=(7,), use_container_width=True)
-                with col2: st.button("최근 30일", on_click=set_range, args=(30,), use_container_width=True)
-
-                if "date_range" not in st.session_state:
-                    set_range(7)
-                
-                current_range = st.session_state.get("date_range")
-                if not (isinstance(current_range, (list, tuple)) and len(current_range) == 2 and current_range[0] >= min_d and current_range[1] <= max_d):
-                    set_range(7) 
-
-                date_range = st.date_input("조회 기간:", key="date_range", min_value=min_d, max_value=max_d)
-
-            st.markdown("---")
-            st.subheader("🕹️ 게임 및 플랫폼 선택")
-            st.checkbox("전체", key="select_all", on_change=master_toggle)
-            for game, opts in game_filters.items():
-                with st.expander(game, expanded=True):
-                    if len(opts) > 1 and "(전체)" in opts[0]:
-                        st.checkbox(opts[0], key=opts[0], on_change=group_toggle, args=(game,))
-                        for opt in opts[1:]:
-                            st.checkbox(opt, key=opt, on_change=child_toggle, args=(game,))
-                    else:
-                        st.checkbox(opts[0], key=opts[0], on_change=update_master_checkbox)
-
-    
-    if filtered.empty or not isinstance(date_range, (list, tuple)) or len(date_range) != 2:
+    # --- [수정] 메인 대시보드 로직 (필터링된 데이터 기준) ---
+    if filtered.empty or not (isinstance(date_range, (list, tuple)) and len(date_range) == 2):
         st.warning("표시할 데이터가 없습니다. 필터/기간을 조정하세요.")
     else:
         start_dt = pd.to_datetime(date_range[0]).date()
@@ -534,7 +534,7 @@ def main():
 
                 period_days = (date_range[1] - date_range[0]).days + 1
                 prev_start = date_range[0] - timedelta(days=period_days)
-                prev_end   = date_range[1] - timedelta(days=period_days)
+                prev_end = date_range[1] - timedelta(days=period_days)
                 prev_df = filtered[(filtered["날짜_dt"].dt.date >= prev_start) & (filtered["날짜_dt"].dt.date <= prev_end)]
                 delta = len(view_df) - len(prev_df)
 
@@ -546,27 +546,23 @@ def main():
 
             st.markdown("---")
             
-            query_params = st.query_params
-            
             if "active_tab" not in st.session_state:
                 st.session_state.active_tab = "main"
             
+            query_params = st.query_params
             if query_params.get("tab") == "search":
                 st.session_state.active_tab = "search"
                 st.query_params.clear()
+            # ... (이하 탭 전환 로직) ...
 
             tabs = ["📊 카테고리 분석", "🔍 키워드 검색", "💳 결제/인증 리포트"]
             if is_admin:
                 tabs.append("🛡️ 어드민 멤버 관리")
 
-            if st.session_state.active_tab == "search":
-                active_index = 1
-            elif st.session_state.active_tab == "payment":
-                active_index = 2
-            elif st.session_state.active_tab == "admin" and is_admin:
-                active_index = 3
-            else: # "main"
-                active_index = 0
+            if st.session_state.active_tab == "search": active_index = 1
+            elif st.session_state.active_tab == "payment": active_index = 2
+            elif st.session_state.active_tab == "admin" and is_admin: active_index = 3
+            else: active_index = 0
             
             tab_main, tab_search, tab_payment, *tab_admin_list = st.tabs(tabs)
 
@@ -600,7 +596,7 @@ def main():
                             mime="text/csv"
                         )
                         st.dataframe(show_df[["구분","날짜","게임","L1 태그","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]],
-                                     use_container_width=True, height=500)
+                                       use_container_width=True, height=500)
 
             with tab_search:
                 st.header("🔍 키워드 검색")
@@ -641,7 +637,7 @@ def main():
                             with st.container(border=True):
                                 st.header("검색 결과 추이")
                                 st.plotly_chart(create_trend_chart(r, date_range, f"'{last_keyword}' 일자별 발생 추이"),
-                                                use_container_width=True)
+                                                 use_container_width=True)
                             with st.container(border=True):
                                 st.header("관련 VOC 목록")
                                 st.download_button(
@@ -652,7 +648,7 @@ def main():
                                 )
                                 disp_r = r.rename(columns={'플랫폼':'구분','문의내용_요약':'문의 내용'})
                                 st.dataframe(disp_r[["구분","날짜","게임","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]],
-                                             use_container_width=True, height=400)
+                                               use_container_width=True, height=400)
                             with st.container(border=True):
                                 st.header("연관 키워드 워드클라우드")
                                 generate_wordcloud(r["문의내용"])
@@ -672,7 +668,7 @@ def main():
                     with c2:
                         l2_counts_payment = payment_auth_df["L2 태그"].value_counts().nlargest(10).sort_values(ascending=True)
                         fig_l2_payment = px.bar(l2_counts_payment, x=l2_counts_payment.values, y=l2_counts_payment.index, orientation='h',
-                                        title="<b>결제/인증 태그 현황 TOP 10</b>", labels={'x': '건수', 'y': '태그'}, text_auto=True)
+                                                title="<b>결제/인증 태그 현황 TOP 10</b>", labels={'x': '건수', 'y': '태그'}, text_auto=True)
                         fig_l2_payment.update_layout(height=300)
                         st.plotly_chart(fig_l2_payment, use_container_width=True)
                     
@@ -680,7 +676,7 @@ def main():
                         st.header("📑 관련 VOC 원본 데이터")
                         disp_payment = payment_auth_df.rename(columns={'플랫폼': '구분', '문의내용_요약': '문의 내용'})
                         st.dataframe(disp_payment[["구분","날짜","게임","L1 태그","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]],
-                                             use_container_width=True, height=500)
+                                               use_container_width=True, height=500)
 
             if is_admin and tab_admin_list:
                 with tab_admin_list[0]:

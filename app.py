@@ -264,7 +264,7 @@ def classify_sentiment(text):
 def load_voc_data(spreadsheet_id: str) -> pd.DataFrame:
     """
     [수정] Google Sheets에서 '월별' 시트의 VOC 데이터를 불러옵니다.
-    최근 2개월치(이번 달, 지난 달) 데이터만 로드하여 성능을 최적화합니다.
+    YY-MM 형식의 모든 시트를 읽어와 성능과 확장성을 모두 확보합니다.
     """
     ss = open_sheet(spreadsheet_id)
     if not ss:
@@ -273,27 +273,30 @@ def load_voc_data(spreadsheet_id: str) -> pd.DataFrame:
         all_data = []
         
         # [수정] '월별 시트' 아키텍처로 변경
-        today = datetime.now(KST)
-        current_month_str = today.strftime("%y-%m") # 예: 25-10
-        prev_month_date = today - timedelta(days=30) # 30일 전 날짜로 계산
-        prev_month_str = prev_month_date.strftime("%y-%m") # 예: 25-09
+        all_worksheets = ss.worksheets()
         
-        # 중복 제거 (예: 10월 초)
-        sheets_to_load = list(set([current_month_str, prev_month_str]))
+        # 'YY-MM' 형식의 시트 제목만 필터링
+        monthly_sheet_titles = []
+        for ws in all_worksheets:
+            title = ws.title
+            if re.match(r'^\d{2}-\d{2}$', title): # '25-09', '25-10' 등
+                monthly_sheet_titles.append(title)
         
-        st.sidebar.info(f"데이터 로딩 중... (대상: {', '.join(sheets_to_load)})")
+        if not monthly_sheet_titles:
+            st.error("데이터가 없습니다. 'YY-MM' (예: 25-10) 형식의 월별 시트가 있는지 확인해주세요.")
+            return pd.DataFrame()
+            
+        st.sidebar.info(f"데이터 로딩 중... (총 {len(monthly_sheet_titles)}개 월)")
         
-        for sheet_title in sheets_to_load:
-            if sheet_title.lower() in ["sheet1", "template", "mapping", "user_management"]:
-                continue
+        for sheet_title in monthly_sheet_titles:
+            # 'user_management' 등은 'YY-MM' 형식이 아니므로 자동 제외됨
             try:
                 ws = ss.worksheet(sheet_title) # 이름으로 시트 열기 시도
                 rows = ws.get_all_records()
                 if rows:
                     all_data.extend(rows)
             except gspread.WorksheetNotFound:
-                st.sidebar.warning(f"'{sheet_title}' 시트 없음 (데이터 수집 전일 수 있음)")
-                continue # 해당 월의 시트가 아직 없으면 통과
+                continue # 있을 수 없는 일이지만, 안전장치
             except Exception as e:
                 st.warning(f"'{sheet_title}' 시트 로딩 중 오류: {e}")
                 continue
@@ -582,19 +585,12 @@ def main():
                 st.session_state.active_tab = "search"
                 st.query_params.clear()
 
-            tabs = ["📊 카테고리 분석", "🔍 키워드 검색"] # [수정] 탭 목록
+            tabs = ["📊 카테고리 분석", "🔍 키워드 검색", "💳 결제/인증 리포트"]
             if is_admin:
                 tabs.append("🛡️ 어드민 멤버 관리")
-
-            # [수정] 탭 활성화 인덱스 계산
-            if st.session_state.active_tab == "search":
-                active_index = 1
-            elif st.session_state.active_tab == "admin" and is_admin:
-                active_index = 2
-            else: # "main"
-                active_index = 0
             
-            tab_main, tab_search, *tab_admin_list = st.tabs(tabs)
+            # 탭 순서를 고정
+            tab_main, tab_search, tab_payment, *tab_admin_list = st.tabs(tabs)
 
             with tab_main:
                 c1, c2 = st.columns(2)
@@ -649,6 +645,7 @@ def main():
 
                 last_keyword = st.session_state.get("last_search_keyword", "")
                 
+                # [수정] 탭 활성화 로직 변경
                 if st.session_state.active_tab == "search" and last_keyword:
                     keywords = [re.escape(k.strip()) for k in last_keyword.split(",") if k.strip()]
                     if keywords:
@@ -683,39 +680,64 @@ def main():
                                 st.header("연관 키워드 워드클라우드")
                                 generate_wordcloud(r["문의내용"])
             
-            # [수정] 어드민 탭 로직 위치
-            if is_admin and tab_admin_list:
-                with tab_admin_list[0]:
-                    st.subheader("🛡️ 어드민 멤버 관리")
-                    users_df_latest = fetch_users_table(spreadsheet_id) # 최신 정보로 다시 로드
-                    tab_req, tab_members = st.tabs(["접근 요청 목록", "멤버 관리 목록"])
+            with tab_payment:
+                st.header("💳 결제/인증 리포트")
+                st.info("이 탭은 '계정'(로그인/인증) 및 '재화/결제'와 관련된 VOC만 필터링하여 보여줍니다.")
+                
+                payment_auth_df = view_df[view_df['L1 태그'].isin(['계정', '재화/결제'])].copy()
+                
+                if payment_auth_df.empty:
+                    st.warning("해당 기간에 결제 또는 인증 관련 VOC가 없습니다.")
+                else:
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        st.plotly_chart(create_trend_chart(payment_auth_df, date_range, "결제/인증 관련 VOC 발생 추이"), use_container_width=True)
+                    with c2:
+                        l2_counts_payment = payment_auth_df["L2 태그"].value_counts().nlargest(10).sort_values(ascending=True)
+                        fig_l2_payment = px.bar(l2_counts_payment, x=l2_counts_payment.values, y=l2_counts_payment.index, orientation='h',
+                                        title="<b>결제/인증 태그 현황 TOP 10</b>", labels={'x': '건수', 'y': '태그'}, text_auto=True)
+                        fig_l2_payment.update_layout(height=300)
+                        st.plotly_chart(fig_l2_payment, use_container_width=True)
+                    
+                    with st.container(border=True):
+                        st.header("📑 관련 VOC 원본 데이터")
+                        disp_payment = payment_auth_df.rename(columns={'플랫폼': '구분', '문의내용_요약': '문의 내용'})
+                        st.dataframe(disp_payment[["구분","날짜","게임","L1 태그","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]],
+                                             use_container_width=True, height=500)
+    
+    # [수정] 탭이 생성된(데이터가 있는) 경우에만 어드민 탭 로직 실행
+    if is_admin and tab_admin_list:
+        with tab_admin_list[0]:
+            st.subheader("🛡️ 어드민 멤버 관리")
+            users_df_latest = fetch_users_table(spreadsheet_id) # 최신 정보로 다시 로드
+            tab_req, tab_members = st.tabs(["접근 요청 목록", "멤버 관리 목록"])
 
-                    with tab_req:
-                        pending = users_df_latest[users_df_latest["status"] == "pending"]
-                        if pending.empty:
-                            st.info("대기 중인 요청이 없습니다.")
-                        else:
-                            for _, r in pending.iterrows():
-                                c1, c2, c3, c4 = st.columns([3,2,2,2])
-                                c1.write(f"**{r['email']}**")
-                                c2.write(r.get("name",""))
-                                c3.write(r.get("request_date",""))
-                                if c4.button("승인", key=f"approve_{r['email']}"):
-                                    approve_user(spreadsheet_id, r["email"])
+            with tab_req:
+                pending = users_df_latest[users_df_latest["status"] == "pending"]
+                if pending.empty:
+                    st.info("대기 중인 요청이 없습니다.")
+                else:
+                    for _, r in pending.iterrows():
+                        c1, c2, c3, c4 = st.columns([3,2,2,2])
+                        c1.write(f"**{r['email']}**")
+                        c2.write(r.get("name",""))
+                        c3.write(r.get("request_date",""))
+                        if c4.button("승인", key=f"approve_{r['email']}"):
+                            approve_user(spreadsheet_id, r["email"])
 
-                    with tab_members:
-                        approved = users_df_latest[users_df_latest["status"] == "approved"]
-                        if approved.empty:
-                            st.info("승인된 멤버가 없습니다.")
-                        else:
-                            for _, r in approved.iterrows():
-                                c1, c2, c3, c4, c5 = st.columns([3,2,2,2,1])
-                                c1.write(f"**{r['email']}**")
-                                c2.write(r.get("name",""))
-                                c3.write(r.get("request_date",""))
-                                c4.write(r.get("approved_date",""))
-                                if c5.button("🗑️", key=f"revoke_{r['email']}"):
-                                    revoke_user(spreadsheet_id, r["email"])
+            with tab_members:
+                approved = users_df_latest[users_df_latest["status"] == "approved"]
+                if approved.empty:
+                    st.info("승인된 멤버가 없습니다.")
+                else:
+                    for _, r in approved.iterrows():
+                        c1, c2, c3, c4, c5 = st.columns([3,2,2,2,1])
+                        c1.write(f"**{r['email']}**")
+                        c2.write(r.get("name",""))
+                        c3.write(r.get("request_date",""))
+                        c4.write(r.get("approved_date",""))
+                        if c5.button("🗑️", key=f"revoke_{r['email']}"):
+                            revoke_user(spreadsheet_id, r["email"])
 
     st.sidebar.button("로그아웃", on_click=st.logout)
     st.markdown("---")

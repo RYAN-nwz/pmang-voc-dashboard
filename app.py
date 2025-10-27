@@ -10,8 +10,9 @@ import matplotlib.pyplot as plt
 import re
 
 # --- 1. 기본 설정 ---
-# [수정] SPREADSHEET_ID 제거 (이제 동적으로 파일을 찾습니다)
-SERVICE_ACCOUNT_FILE = 'service_account.json'
+# [수정] SPREADSHEET_ID 제거
+# [수정] SERVICE_ACCOUNT_FILE 제거 (이제 Secrets를 사용합니다)
+# SERVICE_ACCOUNT_FILE = 'service_account.json'
 
 st.set_page_config(page_title="피망 웹보드 VOC 대시보드", page_icon="📊", layout="wide")
 
@@ -51,21 +52,29 @@ def classify_platform(category):
     if "pc" in category: return "PC"
     return "기타"
 
-@st.cache_data(ttl=600) # 10분마다 데이터 새로고침
+@st.cache_data(ttl=600)
 def load_data():
     """[수정] Google Sheets에서 'VOC 데이터 (YYYY-MM)' 형식의 모든 파일을 읽어옴"""
     try:
         scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-        creds = ServiceAccountCredentials.from_json_keyfile_name(SERVICE_ACCOUNT_FILE, scope)
-        gc = gspread.authorize(creds)
+        
+        # --- [수정] Secrets에서 인증 정보 불러오기 ---
+        # 로컬 파일 대신 Streamlit Cloud의 Secrets에 저장된 인증 정보를 사용합니다.
+        try:
+            creds_dict = st.secrets["gcp_service_account"]
+            creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+            gc = gspread.authorize(creds)
+            print("✅ Streamlit Secrets를 통해 Google Sheets API 인증 성공.")
+        except Exception as e:
+            st.error(f"❌ Streamlit Secrets 인증 정보 로드 실패: {e}")
+            st.error("Streamlit Cloud 앱 설정(Manage app > Settings > Secrets)에 `gcp_service_account` 정보가 올바르게 입력되었는지 확인하세요.")
+            return pd.DataFrame()
+        # --- [수정 완료] ---
         
         all_data_frames = []
         print("Google Sheets에서 모든 월별 VOC 파일 목록을 불러옵니다...")
         
-        # 서비스 계정이 액세스할 수 있는 모든 스프레드시트 목록을 가져옵니다.
         all_spreadsheets = gc.openall()
-        
-        # "VOC 데이터 (YYYY-MM)" 패턴의 파일만 필터링합니다.
         voc_files = [sh for sh in all_spreadsheets if sh.title.startswith("VOC 데이터 (") and sh.title.endswith(")")]
         
         if not voc_files:
@@ -74,19 +83,16 @@ def load_data():
             
         print(f"{len(voc_files)}개의 월별 파일을 찾았습니다.")
 
-        # 각 월별 파일을 순회하며 데이터 추출
         for spreadsheet in voc_files:
             print(f"--- '{spreadsheet.title}' 파일 처리 중 ---")
             worksheets = spreadsheet.worksheets()
             for worksheet in worksheets:
-                # 'Sheet1'이나 'template' 같은 기본 시트는 건너뜁니다.
                 if worksheet.title.lower() not in ["sheet1", "template", "mapping"]:
                     try:
                         print(f"  '{worksheet.title}' 시트 읽는 중...")
                         data_records = worksheet.get_all_records()
                         if data_records:
                             df_sheet = pd.DataFrame(data_records)
-                            # '날짜' 열이 없는 경우를 대비해 시트 제목(날짜)을 '날짜' 열로 추가
                             df_sheet["날짜"] = worksheet.title
                             all_data_frames.append(df_sheet)
                     except Exception as e:
@@ -124,42 +130,53 @@ def load_data():
         st.error(f"Google Sheets 연결 또는 데이터 처리 중 오류 발생: {e}")
         return pd.DataFrame()
 
+# (이하 나머지 코드는 동일)
 def clean_text_for_wordcloud(text):
     if not isinstance(text, str): return ""
+# ... (existing code) ...
     text = re.sub(r'회원번호\s*:\s*\d+|회원분류\s*:\s*\w+|루팅여부\s*:\s*\w+|OS version\s*:.*|app version\s*:.*|휴대폰기기정보\s*:.*', '', text)
     text = re.sub(r'[^ㄱ-ㅎㅏ-ㅣ가-힣\s]', '', text)
     return text.strip()
 
 def classify_sentiment(text):
     if not isinstance(text, str): return "중립"
+# ... (existing code) ...
     positive_keywords = ["감사합니다", "좋아요", "도움이 되었습니다", "해결", "고맙습니다"]
     negative_keywords = ["짜증", "오류", "환불", "안돼요", "쓰레기", "조작", "불만", "문제", "패몰림", "오링"]
     text_lower = text.lower()
+# ... (existing code) ...
     if any(keyword in text_lower for keyword in negative_keywords): return "부정"
     if any(keyword in text_lower for keyword in positive_keywords): return "긍정"
     return "중립"
 
 def generate_wordcloud(text_data):
     cleaned_texts = [clean_text_for_wordcloud(text) for text in text_data]
+# ... (existing code) ...
     text = ' '.join(cleaned_texts)
     if not text.strip():
         st.info("워드클라우드를 생성할 키워드가 충분하지 않습니다.")
+# ... (existing code) ...
         return
     font_path = 'c:/Windows/Fonts/malgun.ttf'
     korean_stopwords = ['문의', '게임', '피망', '고객', '내용', '확인', '답변', '부탁', '처리', '관련', '안녕하세요']
+# ... (existing code) ...
     try:
         wordcloud = WordCloud(
             font_path=font_path, width=800, height=400, background_color='white', stopwords=set(korean_stopwords)
+# ... (existing code) ...
         ).generate(text)
         fig, ax = plt.subplots(figsize=(5, 2.5))
         ax.imshow(wordcloud, interpolation='bilinear')
+# ... (existing code) ...
         ax.axis('off')
         st.pyplot(fig)
     except FileNotFoundError:
+# ... (existing code) ...
         st.warning("워드클라우드 생성을 위한 한글 폰트를 찾을 수 없습니다. (malgun.ttf)")
     except Exception as e: st.error(f"워드클라우드 생성 중 오류 발생: {e}")
 
 def mask_phone_number(text):
+# ... (existing code) ...
     if not isinstance(text, str): return text
     masked_text = re.sub(r'(010[-.\s]?)\d{3,4}([-.\s]?)\d{4}', r'\1****\2****', text)
     return masked_text
@@ -173,10 +190,12 @@ voc_data = load_data()
 if voc_data.empty:
     st.warning("표시할 데이터가 없습니다. Google Sheets를 확인해주세요.")
 else:
+# ... (existing code) ...
     with st.sidebar:
         st.title("🎮 VOC 대시보드 필터")
         
         st.markdown("### 🕹️ 게임 및 플랫폼 선택")
+# ... (existing code) ...
         game_filters = {
             "뉴맞고": ["뉴맞고 (전체)", "뉴맞고 MOB", "뉴맞고 PC", "뉴맞고 for kakao"],
             "섯다": ["섯다 (전체)", "섯다 MOB", "섯다 PC", "섯다 for kakao"],
@@ -187,195 +206,249 @@ else:
         }
         
         all_options_with_groups = [opt for sublist in game_filters.values() for opt in sublist]
+# ... (existing code) ...
         all_child_options = [opt for game, opts in game_filters.items() for opt in (opts[1:] if "(전체)" in opts[0] else opts)]
         
         def master_checkbox_callback():
+# ... (existing code) ...
             is_all_selected = st.session_state.get('select_all', False)
             for option in all_options_with_groups:
                 st.session_state[option] = is_all_selected
 
         def group_checkbox_callback(game_key):
             is_group_selected = st.session_state.get(f"{game_key} (전체)", False)
+# ... (existing code) ...
             for option in game_filters[game_key][1:]:
                 st.session_state[option] = is_group_selected
             update_master_checkbox()
 
         def child_checkbox_callback(game_key):
+# ... (existing code) ...
             if len(game_filters[game_key]) > 1:
                 all_children_selected = all(st.session_state.get(opt, False) for opt in game_filters[game_key][1:])
                 st.session_state[f"{game_key} (전체)"] = all_children_selected
+# ... (existing code) ...
             update_master_checkbox()
 
         def update_master_checkbox():
             all_groups_selected = all(st.session_state.get(f"{game} (전체)", False) for game, opts in game_filters.items() if len(opts) > 1 and "(전체)" in opts[0])
+# ... (existing code) ...
             all_single_games_selected = all(st.session_state.get(opts[0], False) for game, opts in game_filters.items() if len(opts) == 1)
             st.session_state.select_all = all_groups_selected and all_single_games_selected
         
         if 'filters_initialized' not in st.session_state:
+# ... (existing code) ...
             st.session_state.filters_initialized = True
             st.session_state.select_all = True
             for option in all_options_with_groups:
+# ... (existing code) ...
                 st.session_state[option] = True
         
         st.checkbox("전체", key='select_all', on_change=master_checkbox_callback)
 
         for game, options in game_filters.items():
             with st.expander(game, expanded=True):
+# ... (existing code) ...
                 if len(options) > 1 and "(전체)" in options[0]:
                     st.checkbox(options[0], key=options[0], on_change=group_checkbox_callback, args=(game,))
                     for option in options[1:]:
+# ... (existing code) ...
                         st.checkbox(option, key=option, on_change=child_checkbox_callback, args=(game,))
                 else:
                     st.checkbox(options[0], key=options[0], on_change=update_master_checkbox)
 
         selected_options = [option for option in all_child_options if st.session_state.get(option, False)]
+# ... (existing code) ...
         
         st.markdown("---")
         st.markdown("### 📅 기간 선택")
         def set_date_range(days):
+# ... (existing code) ...
             max_date = voc_data['날짜_dt'].max().date()
             st.session_state.date_range = (max_date - timedelta(days=days-1), max_date)
         col1, col2 = st.columns(2)
+# ... (existing code) ...
         with col1: st.button("최근 7일", on_click=set_date_range, args=(7,), use_container_width=True)
         with col2: st.button("최근 30일", on_click=set_date_range, args=(30,), use_container_width=True)
         if 'date_range' not in st.session_state: set_date_range(7)
+# ... (existing code) ...
         date_range = st.date_input("조회 기간:", key='date_range', min_value=voc_data['날짜_dt'].min().date(), max_value=voc_data['날짜_dt'].max().date())
 
     if not selected_options:
+# ... (existing code) ...
         filtered_data = pd.DataFrame()
     else:
         conditions = []
+# ... (existing code) ...
         for option in selected_options:
             if " for kakao" in option:
                 game_name = option.replace(" for kakao", "")
+# ... (existing code) ...
                 platform_name = "for kakao"
                 conditions.append((voc_data['게임'] == game_name) & (voc_data['플랫폼'] == platform_name))
             elif len(option.split(" ")) > 1:
+# ... (existing code) ...
                 parts = option.split(" ", 1)
                 game_name = parts[0]
                 platform_name = parts[1]
+# ... (existing code) ...
                 conditions.append((voc_data['게임'] == game_name) & (voc_data['플랫폼'] == platform_name))
             else:
                 conditions.append(voc_data['게임'] == option)
+# ... (existing code) ...
         if conditions:
             final_condition = pd.concat(conditions, axis=1).any(axis=1)
             filtered_data = voc_data[final_condition].copy()
+# ... (existing code) ...
         else:
             filtered_data = pd.DataFrame()
             
     if not filtered_data.empty and len(date_range) == 2:
+# ... (existing code) ...
         start_date = pd.to_datetime(date_range[0])
         end_date = pd.to_datetime(date_range[1])
         filtered_data = filtered_data[(filtered_data["날짜_dt"] >= start_date) & (filtered_data["날짜_dt"] <= end_date)]
 
     if filtered_data.empty:
+# ... (existing code) ...
         st.warning(f"선택하신 조건에 해당하는 VOC 데이터가 없습니다.")
     else:
         st.header("🚀 핵심 지표 요약")
+# ... (existing code) ...
         st.markdown(f"**기간: {date_range[0].strftime('%Y-%m-%d')} ~ {date_range[1].strftime('%Y-%m-%d')}**")
         current_count = len(filtered_data)
         top3_categories = filtered_data['L2 태그'].value_counts().nlargest(3)
+# ... (existing code) ...
         col1, col2, col3 = st.columns(3)
         col1.metric("총 VOC 건수", f"{current_count} 건")
         # (전주 대비 로직은 생략)
+# ... (existing code) ...
         with col3:
             st.markdown("**주요 카테고리 TOP 3**")
             for i, (cat, count) in enumerate(top3_categories.items()):
+# ... (existing code) ...
                 st.markdown(f"**{i+1}.** {cat} ({count}건)")
         
         st.markdown("---")
+# ... (existing code) ...
         
         tab_main, tab_search = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색"])
         with tab_main:
             st.header("📅 일자별 VOC 발생 추이")
+# ... (existing code) ...
             all_days_in_range = pd.date_range(start=date_range[0], end=date_range[1], freq='D')
             range_df = pd.DataFrame(all_days_in_range, columns=['날짜_dt'])
             daily_counts = filtered_data.groupby(filtered_data['날짜_dt'].dt.date).size().reset_index(name="건수")
+# ... (existing code) ...
             daily_counts['날짜_dt'] = pd.to_datetime(daily_counts['날짜_dt'])
             merged_daily_data = pd.merge(range_df, daily_counts, on='날짜_dt', how='left').fillna(0)
             fig_daily_trend = px.line(
+# ... (existing code) ...
                 merged_daily_data, x='날짜_dt', y='건수',
                 title=f"<b>{date_range[0]} ~ {date_range[1]} 일자별 VOC 추이</b>",
                 labels={'날짜_dt': '날짜', '건수': 'VOC 건수'}, markers=True, text="건수"
+# ... (existing code) ...
             )
             fig_daily_trend.update_traces(textposition="top center")
             fig_daily_trend.update_layout(xaxis_title="", yaxis_title="건수")
+# ... (existing code) ...
             st.plotly_chart(fig_daily_trend, use_container_width=True)
 
             st.header("📌 VOC 카테고리별 현황")
             l2_counts = filtered_data['L2 태그'].value_counts().nlargest(10).sort_values(ascending=True)
+# ... (existing code) ...
             fig_l2 = px.bar(
                 l2_counts, x=l2_counts.values, y=l2_counts.index, orientation='h', 
                 title="<b>태그별 현황 TOP 10</b>", labels={'x': '건수', 'y': '태그'}, text_auto=True
+# ... (existing code) ...
             )
             st.plotly_chart(fig_l2, use_container_width=True)
             
             st.subheader("📑 VOC 원본 데이터")
+# ... (existing code) ...
             col1, col2 = st.columns([3, 1])
             with col1:
                 all_categories = sorted(filtered_data['L2 태그'].unique())
+# ... (existing code) ...
                 selected_categories = st.multiselect("확인하고 싶은 카테고리를 선택하세요:", options=all_categories, default=top3_categories.index.tolist())
             
             if selected_categories:
+# ... (existing code) ...
                 display_data = filtered_data[filtered_data['L2 태그'].isin(selected_categories)].copy()
                 with col2:
                     st.text(" ") # 버튼 위치 조정을 위한 빈 공간
+# ... (existing code) ...
                     st.download_button(
                         label="📥 CSV로 다운로드",
                         data=display_data.to_csv(index=False).encode('utf-8-sig'),
+# ... (existing code) ...
                         file_name=f"voc_category_data_{datetime.now().strftime('%Y%m%d')}.csv",
                         mime="text/csv",
                         use_container_width=True
+# ... (existing code) ...
                     )
                 display_data['문의내용_요약'] = display_data['문의내용_요약'].apply(mask_phone_number)
                 display_df = display_data.rename(columns={'플랫폼': '구분', '문의내용_요약': '문의 내용'})
-                # [수정] GSN/USN 및 기기정보 열 추가
+# ... (existing code) ...
                 st.dataframe(display_df[["구분", "날짜", "게임", "L2 태그", "상담제목", "문의 내용", "GSN(USN)", "기기정보"]], use_container_width=True, height=500)
 
         with tab_search:
+# ... (existing code) ...
             st.header("🔍 키워드 검색")
             search_keyword = st.text_input("분석하고 싶은 키워드를 입력하세요:", placeholder="예: 환불, 튕김, 업데이트...")
             if search_keyword:
+# ... (existing code) ...
                 search_results = filtered_data[filtered_data["상담제목"].str.contains(search_keyword, na=False, case=False) | filtered_data["검색용_문의내용"].str.contains(search_keyword, na=False, case=False)].copy()
                 if not search_results.empty:
                     st.success(f"✅ \"{search_keyword}\" 키워드가 포함된 VOC: **{len(search_results)}**건")
+# ... (existing code) ...
                     
                     st.subheader(f"'{search_keyword}' 키워드 검색 결과 추이")
                     search_all_days = pd.date_range(start=date_range[0], end=date_range[1], freq='D')
+# ... (existing code) ...
                     search_range_df = pd.DataFrame(search_all_days, columns=['날짜_dt'])
                     search_daily_counts = search_results.groupby(search_results['날짜_dt'].dt.date).size().reset_index(name="건수")
                     search_daily_counts['날짜_dt'] = pd.to_datetime(search_daily_counts['날짜_dt'])
+# ... (existing code) ...
                     search_merged_data = pd.merge(search_range_df, search_daily_counts, on='날짜_dt', how='left').fillna(0)
                     fig_search_trend = px.line(
                         search_merged_data, x='날짜_dt', y='건수',
+# ... (existing code) ...
                         title=f"<b>'{search_keyword}' 키워드 일자별 발생 추이</b>",
                         labels={'날짜_dt': '날짜', '건수': 'VOC 건수'}, markers=True, text="건수"
                     )
+# ... (existing code) ...
                     fig_search_trend.update_traces(textposition="top center")
                     fig_search_trend.update_layout(xaxis_title="", yaxis_title="건수")
                     st.plotly_chart(fig_search_trend, use_container_width=True)
 
                     search_results['감성'] = search_results['문의내용'].apply(classify_sentiment)
+# ... (existing code) ...
                     sentiment_counts = search_results['감성'].value_counts()
                     st.subheader("감성 분석 결과")
                     sentiment_cols = st.columns(3)
+# ... (existing code) ...
                     sentiment_cols[0].metric("긍정 😊", f"{sentiment_counts.get('긍정', 0)} 건")
                     sentiment_cols[1].metric("부정 😠", f"{sentiment_counts.get('부정', 0)} 건")
                     sentiment_cols[2].metric("중립 😐", f"{sentiment_counts.get('중립', 0)} 건")
+# ... (existing code) ...
                     
                     st.subheader("관련 VOC 목록")
                     st.download_button(
                         label="📥 검색 결과 다운로드",
+# ... (existing code) ...
                         data=search_results.to_csv(index=False).encode('utf-8-sig'),
                         file_name=f"voc_search_{search_keyword}_{datetime.now().strftime('%Y%m%d')}.csv",
                         mime="text/csv"
+# ... (existing code) ...
                     )
                     search_results['문의내용_요약'] = search_results['문의내용_요약'].apply(mask_phone_number)
                     display_search_df = search_results.rename(columns={'플랫폼': '구분', '문의내용_요약': '문의 내용'})
-                    # [수정] GSN/USN 및 기기정보 열 추가
+# ... (existing code) ...
                     st.dataframe(display_search_df[["구분", "날짜", "게임", "L2 태그", "상담제목", "문의 내용", "GSN(USN)", "기기정보", "감성"]], use_container_width=True, height=400)
                     
                     st.subheader("연관 키워드 워드클라우드")
+# ... (existing code) ...
                     generate_wordcloud(search_results["문의내용"])
                 else:
                     st.warning(f"⚠️ \"{search_keyword}\" 키워드가 포함된 VOC가 없습니다.")

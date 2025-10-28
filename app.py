@@ -261,13 +261,15 @@ def extract_device_info(row):
 
 def truncate_inquiry_content(text):
     if isinstance(text, str):
-        return text.split("회원번호 :")[0].strip()
+        # 300자까지 자르고, 뒤에 있는 회원번호 정보를 제거
+        cleaned = text.split("회원번호 :")[0].strip()
+        return cleaned[:300] + ('...' if len(cleaned) > 300 else '')
     return ""
 
 def classify_sentiment(text):
     if not isinstance(text, str): return "중립"
     pos = ["감사합니다", "좋아요", "도움이 되었습니다", "해결", "고맙습니다"]
-    neg = ["짜증", "오류", "환불", "안돼요", "쓰레기", "조작", "불만", "문제", "패몰림", "오링"]
+    neg = ["짜증", "오류", "환불", "안돼요", "쓰레기", "조작", "불만", "문제", "패몰림", "오링", "강퇴", "버그", "렉"]
     t = text.lower()
     if any(k in t for k in [w.lower() for w in neg]): return "부정"
     if any(k in t for k in [w.lower() for w in pos]): return "긍정"
@@ -345,7 +347,8 @@ def load_voc_data(spreadsheet_id: str) -> pd.DataFrame:
         df["L1 태그"] = df["L2 태그"].map(L2_TO_L1_MAPPING).fillna("기타")
         df["GSN(USN)"] = df.apply(extract_gsn_usn, axis=1)
         df["기기정보"] = df.apply(extract_device_info, axis=1)
-        df["문의내용_요약"] = df["문의내용"].apply(truncate_inquiry_content)
+        # 문의내용 요약은 truncate 함수에서 처리 (마스킹은 나중에)
+        df["문의내용_요약"] = df["문의내용"].apply(truncate_inquiry_content) 
         df["검색용_문의내용"] = df["문의내용_요약"]
         df["감성"] = df["문의내용"].apply(classify_sentiment)
         return df
@@ -354,53 +357,81 @@ def load_voc_data(spreadsheet_id: str) -> pd.DataFrame:
         st.exception(e)
         return pd.DataFrame()
 
-# 🚨 [새로운 함수] 전일 VOC 핵심 요약 데이터 생성
-def get_yesterday_summary(voc_df: pd.DataFrame, current_date: date) -> dict:
-    """전일 VOC 데이터를 분석하여 건수, 요약, 핵심 키워드를 반환합니다."""
-    # current_date는 Streamlit 실행 시점의 KST 날짜
-    yesterday = current_date - timedelta(days=1)
+# 🚨 [수정 및 확장된 함수] 게임별 전일 VOC 핵심 요약 및 샘플 추출
+def get_yesterday_summary_by_game(voc_df: pd.DataFrame, current_date: date) -> dict:
+    """전일 게임별 VOC 데이터를 분석하여 건수, 증감, 부정 비율, 핵심 VOC 샘플을 반환합니다."""
     
-    # 데이터 유효성 검사
     if voc_df.empty or '날짜_dt' not in voc_df.columns:
-        return {"count": 0, "summary": "데이터 로딩 오류 또는 VOC 데이터 없음", "keywords": []}
+        return {}
+
+    yesterday = current_date - timedelta(days=1)
+    two_days_ago = current_date - timedelta(days=2)
+    
+    GAME_ICONS = {"뉴맞고": "🎴", "섯다": "🎴", "포커": "♣️", "쇼다운홀덤": "♠️", "뉴베가스": "🎰"}
+    games = list(GAME_ICONS.keys())
+    results = {}
+    
+    # 1. 일별 VOC 건수 계산 (D-1, D-2)
+    daily_counts = voc_df[voc_df["날짜_dt"].dt.date.isin([yesterday, two_days_ago])]
+    daily_counts = daily_counts.groupby([daily_counts["날짜_dt"].dt.date, "게임"]).size().reset_index(name="count")
+    
+    counts_d1 = daily_counts[daily_counts["날짜_dt"] == yesterday].set_index("게임")["count"].to_dict()
+    counts_d2 = daily_counts[daily_counts["날짜_dt"] == two_days_ago].set_index("게임")["count"].to_dict()
+
+    for game in games:
+        game_df_d1 = voc_df[(voc_df["날짜_dt"].dt.date == yesterday) & (voc_df["게임"] == game)].copy()
         
-    yesterday_df = voc_df[voc_df["날짜_dt"].dt.date == yesterday].copy()
-
-    if yesterday_df.empty:
-        return {"count": 0, "summary": "전일 VOC 발생 기록 없음 (Good!)", "keywords": []}
-
-    # 1. L2 태그 기반 핵심 이슈 추출 (Top 2)
-    l2_counts = yesterday_df["L2 태그"].value_counts(normalize=True).nlargest(2)
-    l2_summary = ", ".join([f"{k} ({v*100:.1f}%)" for k, v in l2_counts.items()])
-    
-    # 2. 부정 감성 기반 핵심 키워드 추출
-    neg_df = yesterday_df[yesterday_df["감성"] == "부정"]
-    
-    top_keywords = []
-    if not neg_df.empty:
-        texts = [clean_text_for_wordcloud(x) for x in neg_df["문의내용"]]
-        s = " ".join(texts).strip()
-        if s:
-            # WordCloud의 단어 빈도수 계산 로직을 사용
-            stopwords = set(['문의','게임','피망','고객','내용','확인','답변','부탁','처리','관련','안녕하세요'])
-            wc_instance = WordCloud(stopwords=stopwords)
-            # process_text는 (단어: 빈도) 딕셔너리를 반환
-            word_counts = wc_instance.process_text(s)
+        count_d1 = counts_d1.get(game, 0)
+        count_d2 = counts_d2.get(game, 0)
+        
+        # 증감 계산
+        delta = count_d1 - count_d2
+        
+        # 부정 VOC 분석
+        neg_df_d1 = game_df_d1[game_df_d1["감성"] == "부정"]
+        neg_count = len(neg_df_d1)
+        neg_ratio = neg_count / count_d1 * 100 if count_d1 > 0 else 0
+        
+        # 핵심 VOC 샘플 추출 (부정 감성 VOC 중 가장 문의내용이 긴 것)
+        # 가장 길다는 것은 상세한 불만이 담겨있을 확률이 높음
+        sample_voc = {"제목": "VOC 없음", "내용": "---", "태그": "---", "인사이트": "전일 VOC 발생 기록 없음"}
+        
+        if not neg_df_d1.empty:
+            # 문의내용 길이를 기준으로 정렬
+            neg_df_d1['content_len'] = neg_df_d1['문의내용'].str.len()
+            top_neg_voc = neg_df_d1.nlargest(1, 'content_len').iloc[0]
             
-            # Top 3 키워드 추출
-            top_keywords = [item[0] for item in sorted(word_counts.items(), key=lambda item: item[1], reverse=True)[:3]]
+            sample_voc["제목"] = top_neg_voc['상담제목']
+            sample_voc["내용"] = mask_phone_number(top_neg_voc['문의내용_요약']) # 마스킹 적용
+            sample_voc["태그"] = top_neg_voc['L2 태그']
             
-    # 3. 종합 요약 메시지 생성
-    if neg_df.empty or not top_keywords:
-        main_summary = f"주요 이슈 태그: {l2_summary}"
-    else:
-        main_summary = f"주요 이슈: {l2_summary}. 부정 키워드: {', '.join(top_keywords)}"
-
-    return {
-        "count": len(yesterday_df),
-        "summary": main_summary,
-        "keywords": top_keywords,
-    }
+        elif count_d1 > 0:
+            # 부정 VOC가 없을 경우, 일반 VOC 중 가장 문의내용이 긴 것을 샘플로 사용
+            game_df_d1['content_len'] = game_df_d1['문의내용'].str.len()
+            top_voc = game_df_d1.nlargest(1, 'content_len').iloc[0]
+            sample_voc["제목"] = top_voc['상담제목']
+            sample_voc["내용"] = mask_phone_number(top_voc['문의내용_요약'])
+            sample_voc["태그"] = top_voc['L2 태그']
+            
+        # 개선 인사이트 자동 생성 (키워드/비율 기반)
+        if count_d1 > 0:
+            if neg_ratio >= 30:
+                summary = f"🔥 {neg_ratio:.0f}%가 부정 VOC. **{sample_voc['태그']}** 관련 심각 이슈 발생 가능성, 즉시 확인 요망."
+            elif neg_ratio >= 10:
+                summary = f"⚠️ {neg_ratio:.0f}%가 부정 VOC. **{sample_voc['태그']}** 태그 중심으로 모니터링 필요."
+            else:
+                summary = f"컨디션 양호. 주요 이슈 태그: **{sample_voc['태그']}**"
+            sample_voc["인사이트"] = summary
+        
+        results[game] = {
+            "icon": GAME_ICONS[game],
+            "count": count_d1,
+            "delta": delta,
+            "sample": sample_voc,
+            "neg_ratio": neg_ratio
+        }
+    
+    return results
 
 
 # =============================
@@ -458,6 +489,7 @@ def generate_wordcloud(text_series):
 
 def mask_phone_number(text):
     if not isinstance(text, str): return text
+    # 010-xxxx-xxxx 패턴 마스킹
     return re.sub(r'(010[-.\s]?)\d{3,4}([-.\s]?)\d{4}', r'\1****\2****', text)
 
 # =============================
@@ -647,54 +679,88 @@ def main():
         st.sidebar.button("로그아웃", on_click=st.logout)
         return
 
-    # ===== 대시보드 상단 요약 (전일 VOC 컨디션 요약으로 대체) =====
+    # ===== 대시보드 상단 요약 (게임별 전일 VOC 컨디션 요약으로 변경) =====
     with st.container(border=True):
         st.header("🚀 핵심 지표 요약")
         start_dt = pd.to_datetime(date_range[0]).date()
         end_dt = pd.to_datetime(date_range[1]).date()
-        st.markdown(f"**기간: {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}**")
-
+        
+        # 1. 전체 VOC 건수 (선택 기간)
         period_days = (end_dt - start_dt).days + 1
         prev_start = start_dt - timedelta(days=period_days)
         prev_end   = end_dt - timedelta(days=period_days)
         
-        # 이전 기간 데이터셋 생성
         if '날짜_dt' in filtered.columns and not filtered.empty:
             prev_df = filtered[(filtered["날짜_dt"].dt.date >= prev_start) & (filtered["날짜_dt"].dt.date <= prev_end)]
         else:
             prev_df = pd.DataFrame() 
             
         delta = len(view_df) - len(prev_df)
+
+        st.markdown(f"**조회 기간: {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}**")
+        st.metric("총 VOC 건수 (기간 전체)", f"{len(view_df)} 건", f"{delta} 건 (이전 동기간 대비)")
+        st.markdown("---")
+
+        # 2. 게임별 전일 VOC 컨디션 요약
+        current_kdate = datetime.now(KST).date()
+        yesterday_date = current_kdate - timedelta(days=1)
+        st.subheader(f"🎮 전일 VOC 컨디션: 게임별 심층 분석 ({yesterday_date.strftime('%Y-%m-%d')})")
         
-        # 🚨 [수정된 부분] col2에 전일 요약 추가
-        col1, col2 = st.columns([1, 2])
+        game_summaries = get_yesterday_summary_by_game(voc_df, current_kdate)
+        games_to_show = ["뉴맞고", "섯다", "포커", "쇼다운홀덤", "뉴베가스"]
         
-        # col1: 전체 기간 VOC 건수
-        with col1:
-            st.metric("총 VOC 건수", f"{len(view_df)} 건", f"{delta} 건 (이전 동기간 대비)")
+        cols = st.columns(len(games_to_show))
         
-        # col2: 전일 VOC 컨디션 요약
-        yesterday_date = datetime.now(KST).date() - timedelta(days=1)
-        yesterday_data = get_yesterday_summary(voc_df, datetime.now(KST).date())
+        # 게임별 메트릭 출력 (Top Row)
+        for i, game in enumerate(games_to_show):
+            summary_data = game_summaries.get(game, {})
+            
+            if not summary_data:
+                cols[i].caption(f"**{game}**")
+                cols[i].write("데이터 없음")
+                continue
+
+            count = summary_data['count']
+            delta_val = summary_data['delta']
+            icon = summary_data['icon']
+
+            # 메트릭 출력 (VOC 건수 및 전일 대비 증감)
+            cols[i].metric(
+                label=f"{icon} **{game}**", 
+                value=f"{count} 건", 
+                delta=f"{delta_val} 건 (전일 대비)" if delta_val != 0 else None,
+                delta_color="inverse" if delta_val > 0 else "normal"
+            )
         
-        with col2:
-            with st.container(border=True):
-                st.subheader(f"🗓️ 전일 VOC 컨디션 요약 ({yesterday_date.strftime('%Y-%m-%d')})")
+        st.markdown("---")
+
+        # 게임별 심층 분석 (Bottom Row)
+        for game in games_to_show:
+            summary_data = game_summaries.get(game, {})
+            
+            if not summary_data or summary_data['count'] == 0:
+                continue # VOC 없는 게임은 심층 분석 스킵
+
+            sample = summary_data['sample']
+            icon = summary_data['icon']
+            
+            # Expander를 사용하여 디자인 유사하게 구성
+            with st.expander(f"{icon} **{game}**: {sample['인사이트']}", expanded=True):
+                # 1. 핵심 VOC 샘플
+                st.markdown(f"**{sample['태그']}** 관련 VOC 샘플")
+                st.markdown(f'> **"{sample["내용"]}"**')
                 
-                c2_1, c2_2 = st.columns([1, 2.5])
-                with c2_1:
-                    # 전일 VOC 건수
-                    st.metric("전일 VOC 건수", f"{yesterday_data['count']} 건", delta=None)
-
-                with c2_2:
-                    # 핵심 이슈 요약
-                    st.markdown(f"**핵심 이슈:** {yesterday_data['summary']}")
-                    
-                    # 키워드 (선택적)
-                    if yesterday_data['keywords']:
-                        keywords_str = " ".join([f"`{k}`" for k in yesterday_data['keywords']])
-                        st.caption(f"주요 부정 키워드: {keywords_str}")
-
+                # 2. 개선 인사이트
+                st.markdown("---")
+                st.markdown(f"**개선 인사이트 (자동 생성):**")
+                
+                # 부정 비율에 따른 자동 인사이트
+                if summary_data['neg_ratio'] >= 30:
+                    st.error(f"**심각** | 전일 VOC 중 {summary_data['neg_ratio']:.0f}%가 부정 감성. {sample['태그']} 관련 이슈 발생 시, 영향도 파악 및 긴급 대응이 필요합니다.")
+                elif summary_data['neg_ratio'] >= 10:
+                    st.warning(f"**주의** | 전일 VOC 중 {summary_data['neg_ratio']:.0f}%가 부정 감성. {sample['태그']} 관련 불만이 증가 추세일 수 있습니다. 해당 원본 VOC 검토를 시작하세요.")
+                else:
+                    st.info(f"**양호** | 전일 VOC 컨디션 양호. {sample['태그']} 관련 VOC는 일반적인 문의 수준입니다. 필요 시 워크시트에서 상세 내역을 확인하세요.")
 
     st.markdown("---")
 

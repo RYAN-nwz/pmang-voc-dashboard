@@ -58,6 +58,7 @@ def normalize_sa_info(sa: dict) -> dict:
     return sa
 
 def now_kst_str():
+    # KST 시간대를 사용하도록 명시적으로 정의됨
     return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
 
 def get_sheet_id() -> str:
@@ -171,6 +172,7 @@ def submit_access_request(spreadsheet_id: str, email: str, name: str):
     if not df.empty and (df["email"].str.lower() == email.lower()).any():
         st.info("이미 요청되었거나 등록된 이메일입니다.")
         return
+    # ✅ KST 시간으로 기록
     ws.append_row([email, name, now_kst_str(), "pending", ""])
     st.success("접근 요청 완료! 관리자의 승인을 기다려주세요.")
     st.cache_data.clear()
@@ -182,6 +184,7 @@ def approve_user(spreadsheet_id: str, email: str):
     ws = get_or_create_user_mgmt_worksheet(ss)
     cell = ws.find(email)
     ws.update_cell(cell.row, 4, "approved")
+    # ✅ KST 시간으로 기록
     ws.update_cell(cell.row, 5, now_kst_str())
     st.toast(f"{email} 승인 완료")
     st.cache_data.clear()

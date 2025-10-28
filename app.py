@@ -557,10 +557,11 @@ def main():
     # 필터 적용
     selected = [opt for opt in all_child if st.session_state.get(opt, True)]
     
-    # 🚨 수정된 부분: 선택된 항목이 없을 때 '날짜_dt' 키 에러 방지
+    # 🚨 수정된 부분: selected가 비어있을 때 filtered를 빈 DataFrame으로 바로 설정
     if not selected:
-        # voc_df의 컬럼을 복사하여 빈 DataFrame을 생성 (KeyError 방지)
-        filtered = pd.DataFrame(columns=voc_df.columns)
+        # 빈 결과로 즉시 view_df를 설정하여 에러를 피함
+        filtered = pd.DataFrame(columns=voc_df.columns if not voc_df.empty else [])
+        view_df = pd.DataFrame(columns=filtered.columns) # date_range 필터링을 건너뛰고 빈 상태로 설정
     else:
         conditions = []
         for opt in selected:
@@ -578,21 +579,17 @@ def main():
         mask = pd.concat(conditions, axis=1).any(axis=1) if conditions else pd.Series(False, index=voc_df.index)
         filtered = voc_df[mask].copy()
 
-    if not isinstance(date_range, (list, tuple)) or len(date_range) != 2:
-        st.warning("표시할 데이터가 없습니다. 필터/기간을 조정하세요.")
-        st.sidebar.button("로그아웃", on_click=st.logout)
-        return
+        if not isinstance(date_range, (list, tuple)) or len(date_range) != 2:
+            st.warning("표시할 데이터가 없습니다. 필터/기간을 조정하세요.")
+            st.sidebar.button("로그아웃", on_click=st.logout)
+            return
 
-    # 날짜 필터링
-    start_dt = pd.to_datetime(date_range[0]).date()
-    end_dt = pd.to_datetime(date_range[1]).date()
-    
-    # 수정된 filtered DataFrame (컬럼 포함)에 날짜 필터링 적용
-    if '날짜_dt' in filtered.columns:
+        # 날짜 필터링 (filtered가 비어있지 않고 '날짜_dt' 컬럼이 datetimelike 타입인 경우)
+        start_dt = pd.to_datetime(date_range[0]).date()
+        end_dt = pd.to_datetime(date_range[1]).date()
+        
+        # filtered는 voc_df의 subset이므로 '날짜_dt' 타입이 보장됨 (load_voc_data에서 변환함)
         view_df = filtered[(filtered["날짜_dt"].dt.date >= start_dt) & (filtered["날짜_dt"].dt.date <= end_dt)].copy()
-    else:
-        # 필터링 결과가 비었을 때 (selected=[]의 경우)
-        view_df = pd.DataFrame(columns=filtered.columns)
 
     if view_df.empty:
         st.warning("선택하신 조건에 해당하는 데이터가 없습니다.")
@@ -602,17 +599,20 @@ def main():
     # ===== 대시보드 상단 요약 =====
     with st.container(border=True):
         st.header("🚀 핵심 지표 요약")
+        start_dt = pd.to_datetime(date_range[0]).date()
+        end_dt = pd.to_datetime(date_range[1]).date()
         st.markdown(f"**기간: {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}**")
 
         period_days = (end_dt - start_dt).days + 1
         prev_start = start_dt - timedelta(days=period_days)
         prev_end   = end_dt - timedelta(days=period_days)
         
-        # 이전 기간 데이터셋 생성 시에도 '날짜_dt' 컬럼이 존재해야 함
-        if '날짜_dt' in filtered.columns:
+        # 이전 기간 데이터셋 생성
+        # filtered가 비어있을 때는 prev_df도 비어있게 처리
+        if '날짜_dt' in filtered.columns and not filtered.empty:
             prev_df = filtered[(filtered["날짜_dt"].dt.date >= prev_start) & (filtered["날짜_dt"].dt.date <= prev_end)]
         else:
-            prev_df = pd.DataFrame() # 빈 DataFrame으로 안전하게 처리
+            prev_df = pd.DataFrame() 
             
         delta = len(view_df) - len(prev_df)
 

@@ -230,33 +230,55 @@ def main():
         st.warning("VOC 데이터가 없습니다.")
         st.stop()
 
-    min_d, max_d = voc_df["날짜_dt"].min().date(), voc_df["날짜_dt"].max().date()
+    # ✅ 안전한 날짜 초기화
+    min_dt = voc_df["날짜_dt"].min()
+    max_dt = voc_df["날짜_dt"].max()
+    if pd.isna(min_dt) or pd.isna(max_dt):
+        st.error("유효한 날짜 데이터가 없습니다.")
+        st.stop()
+    min_d, max_d = min_dt.date(), max_dt.date()
     if "date_range" not in st.session_state:
-        st.session_state.date_range = (max_d - timedelta(days=6), max_d)
-    date_range = st.date_input("조회 기간", key="date_range", min_value=min_d, max_value=max_d)
+        st.session_state.date_range = (max(min_d, max_d - timedelta(days=6)), max_d)
+    start, end = st.session_state.date_range
+    if isinstance(start, pd.Timestamp): start = start.date()
+    if isinstance(end, pd.Timestamp): end = end.date()
+    if start < min_d: start = min_d
+    if end > max_d: end = max_d
+    if start > end: start, end = min_d, max_d
+    st.session_state.date_range = (start, end)
+    date_range = st.date_input("조회 기간", value=st.session_state.date_range, min_value=min_d, max_value=max_d)
 
     tabs = ["📊 카테고리 분석", "🔍 키워드 검색", "💳 결제/인증 리포트"]
     tab_main, tab_search, tab_payment = st.tabs(tabs)
 
-    # --- 1) 카테고리 분석
+    # --- 📊 카테고리 분석
     with tab_main:
+        st.header("📊 VOC 카테고리 분석")
         st.plotly_chart(create_trend_chart(voc_df, date_range, "일자별 VOC 발생 추이"))
         st.plotly_chart(create_donut_chart(voc_df, "주요 L1 태그", group_by='L1 태그'))
 
-    # --- 2) 키워드 검색
+    # --- 🔍 키워드 검색
     with tab_search:
+        st.header("🔍 키워드 검색")
         keyword = st.text_input("검색 키워드", value="")
         if keyword:
-            r = voc_df[voc_df["상담제목"].str.contains(keyword, na=False)]
-            st.success(f"{len(r)}건 검색됨")
-            st.dataframe(r[["날짜","게임","L1 태그","L2 태그","상담제목"]])
+            r = voc_df[
+                voc_df["상담제목"].str.contains(keyword, na=False, case=False)
+                | voc_df["문의내용"].str.contains(keyword, na=False, case=False)
+            ]
+            if r.empty:
+                st.warning(f"'{keyword}' 관련 VOC가 없습니다.")
+            else:
+                st.success(f"{len(r)}건 검색됨")
+                st.dataframe(r[["날짜","게임","L1 태그","L2 태그","상담제목"]])
 
-    # --- 3) 결제/인증 리포트
+    # --- 💳 결제/인증 리포트
     with tab_payment:
+        st.header("💳 결제/인증 리포트")
         target = voc_df[voc_df["L1 태그"].isin(["계정", "재화/결제"])]
         st.plotly_chart(create_trend_chart(target, date_range, "결제/인증 관련 추이"))
 
-    # --- 4) 어드민 멤버 관리 (하단 고정)
+    # --- 🛡️ 어드민 멤버 관리 (하단 고정)
     if is_admin:
         st.markdown("---")
         st.header("🛡️ 어드민 멤버 관리")

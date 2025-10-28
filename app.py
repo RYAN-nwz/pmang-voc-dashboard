@@ -678,6 +678,22 @@ def main():
         st.sidebar.button("로그아웃", on_click=st.logout)
         return
 
+    # ===== CSS 스타일 조정 (VOC 건수 폰트 크기 조정) =====
+    st.markdown("""
+        <style>
+            /* metric value 폰트 크기 증가 */
+            [data-testid="stMetricValue"] {
+                font-size: 1.8rem; /* 기존보다 크게 설정 */
+            }
+            /* metric label 폰트 크기 증가 및 굵게 */
+            [data-testid="stMetricLabel"] label {
+                font-size: 1rem;
+                font-weight: bold;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+    # ===== CSS 스타일 조정 끝 =====
+
     # ===== 대시보드 상단 요약 (기간 전체 VOC 건수 제거) =====
     with st.container(border=True):
         
@@ -706,7 +722,7 @@ def main():
             
             # 메트릭 출력 (VOC 건수 및 전일 대비 증감)
             cols[i].metric(
-                label=f"{icon} **{game}**", 
+                label=f"{icon} {game}", 
                 value=f"{count} 건", 
                 delta=f"{delta_val} 건" if delta_val != 0 else None,
                 delta_color="inverse" if delta_val > 0 else "normal"
@@ -719,7 +735,7 @@ def main():
             if "🔥 심각" in summary_text: color = "red"
             elif "⚠️ 주의" in summary_text: color = "orange"
             
-            cols[i].markdown(f'<p style="color:{color}; font-size: 0.8em; margin-top: -10px;">{summary_text}</p>', unsafe_allow_html=True)
+            cols[i].markdown(f'<p style="color:{color}; font-size: 0.9em; margin-top: -10px;">{summary_text}</p>', unsafe_allow_html=True)
         
         st.markdown("---") # 요약 메트릭과 심층 분석 구분선
 
@@ -779,8 +795,10 @@ def main():
             st.warning("유효한 조회 기간이 설정되지 않았습니다.")
         else:
             # 기간 설정 및 데이터프레임 필터링은 위에서 이미 view_df에 적용됨
-            st.plotly_chart(create_trend_chart(view_df, (start_dt, end_dt), "일자별 VOC 발생 추이"), use_container_width=True)
-            st.plotly_chart(create_donut_chart(view_df, "주요 L1 카테고리", group_by='L1 태그'), use_container_width=True)
+            with c1:
+                st.plotly_chart(create_trend_chart(view_df, (start_dt, end_dt), "일자별 VOC 발생 추이"), use_container_width=True)
+            with c2:
+                st.plotly_chart(create_donut_chart(view_df, "주요 L1 카테고리", group_by='L1 태그'), use_container_width=True)
 
         with st.container(border=True):
             st.header("📑 VOC 원본 데이터 (L2 태그 기준)")

@@ -119,7 +119,8 @@ def get_gspread_client():
             else:
                 st.error("인증 정보를 찾을 수 없습니다. (Secrets 또는 service_account.json)")
                 st.stop()
-        return gspread.authorize(creds)
+            return gspread.authorize(creds) # 이 부분이 들여쓰기 잘못되어 있어서 수정했습니다. (로컬 파일 인증 시)
+        return gspread.authorize(creds) # Secrets 인증 시
     except Exception as e:
         st.error("Google 인증 실패: Secrets 또는 service_account.json 구성을 확인하세요.")
         st.exception(e)
@@ -555,8 +556,11 @@ def main():
 
     # 필터 적용
     selected = [opt for opt in all_child if st.session_state.get(opt, True)]
+    
+    # 🚨 수정된 부분: 선택된 항목이 없을 때 '날짜_dt' 키 에러 방지
     if not selected:
-        filtered = pd.DataFrame()
+        # voc_df의 컬럼을 복사하여 빈 DataFrame을 생성 (KeyError 방지)
+        filtered = pd.DataFrame(columns=voc_df.columns)
     else:
         conditions = []
         for opt in selected:
@@ -579,9 +583,16 @@ def main():
         st.sidebar.button("로그아웃", on_click=st.logout)
         return
 
+    # 날짜 필터링
     start_dt = pd.to_datetime(date_range[0]).date()
     end_dt = pd.to_datetime(date_range[1]).date()
-    view_df = filtered[(filtered["날짜_dt"].dt.date >= start_dt) & (filtered["날짜_dt"].dt.date <= end_dt)].copy()
+    
+    # 수정된 filtered DataFrame (컬럼 포함)에 날짜 필터링 적용
+    if '날짜_dt' in filtered.columns:
+        view_df = filtered[(filtered["날짜_dt"].dt.date >= start_dt) & (filtered["날짜_dt"].dt.date <= end_dt)].copy()
+    else:
+        # 필터링 결과가 비었을 때 (selected=[]의 경우)
+        view_df = pd.DataFrame(columns=filtered.columns)
 
     if view_df.empty:
         st.warning("선택하신 조건에 해당하는 데이터가 없습니다.")
@@ -596,7 +607,13 @@ def main():
         period_days = (end_dt - start_dt).days + 1
         prev_start = start_dt - timedelta(days=period_days)
         prev_end   = end_dt - timedelta(days=period_days)
-        prev_df = filtered[(filtered["날짜_dt"].dt.date >= prev_start) & (filtered["날짜_dt"].dt.date <= prev_end)]
+        
+        # 이전 기간 데이터셋 생성 시에도 '날짜_dt' 컬럼이 존재해야 함
+        if '날짜_dt' in filtered.columns:
+            prev_df = filtered[(filtered["날짜_dt"].dt.date >= prev_start) & (filtered["날짜_dt"].dt.date <= prev_end)]
+        else:
+            prev_df = pd.DataFrame() # 빈 DataFrame으로 안전하게 처리
+            
         delta = len(view_df) - len(prev_df)
 
         col1, col2 = st.columns([1, 2])
@@ -690,7 +707,7 @@ def main():
                     with st.container(border=True):
                         st.header("검색 결과 추이")
                         st.plotly_chart(create_trend_chart(r, (start_dt, end_dt), f"'{last_keyword}' 일자별 발생 추이"),
-                                        use_container_width=True)
+                                             use_container_width=True)
                     with st.container(border=True):
                         st.header("관련 VOC 목록")
                         for c in r.columns:

@@ -23,12 +23,13 @@ st.set_page_config(page_title="웹보드 VOC 대시보드", page_icon=LOGO_IMAGE
 
 KST = ZoneInfo("Asia/Seoul")
 
-# 🎨 [디자인 팔레트 정의] - 예시 HTML 참고
-COLOR_PRIMARY = "#118AB2" # 청록색 계열 (KPI 값, 제목 선)
-COLOR_DARK = "#073B4C"     # 진한 네이비 (주요 텍스트, 헤더)
-COLOR_BACKGROUND = "#F0F4F8" # 밝은 회색/푸른색 배경
-COLOR_ACCENT = "#FFD166"   # 노란색 (강조색)
-COLOR_NEGATIVE = "#FF6B6B" # 빨간색 (심각, 부정)
+# 🎨 [디자인 팔레트 정의] - 전문적이고 고급진 색감 적용
+COLOR_PRIMARY = "#118AB2" # 메인 색상: 시안 계열 (전문성)
+COLOR_DARK = "#073B4C"     # 진한 네이비 (텍스트, 헤더)
+COLOR_BACKGROUND = "#F0F4F8" # 밝은 배경
+COLOR_ACCENT = "#FFD166"   # 강조색: 노란색
+COLOR_EXPANDER_BORDER = "#4D94B2" # Expander 좌측 테두리 색상
+COLOR_QUOTE_BG = "#FAFAFA" # 인용구 배경
 
 # =============================
 # 1) 유틸 (이미지, URL/키 정규화)
@@ -382,7 +383,7 @@ def get_yesterday_summary_by_game(voc_df: pd.DataFrame, current_date: date) -> d
     daily_counts = voc_df[voc_df["날짜_dt"].dt.date.isin([yesterday, two_days_ago])]
     daily_counts = daily_counts.groupby([daily_counts["날짜_dt"].dt.date, "게임"]).size().reset_index(name="count")
     
-    counts_d1 = daily_counts[daily_counts["날짜_dt"] == yesterday].set_index("게임")["count"].to_dict()
+    counts_d1 = daily_counts[daily_counts["날날짜_dt"] == yesterday].set_index("게임")["count"].to_dict()
     counts_d2 = daily_counts[daily_counts["날짜_dt"] == two_days_ago].set_index("게임")["count"].to_dict()
 
     for game in games:
@@ -474,8 +475,8 @@ def create_donut_chart(data, title, group_by='L2 태그'):
     else:
         chart_data = counts
         
-    # 예시 HTML의 색상 팔레트와 유사하게 지정
-    color_sequence = [COLOR_PRIMARY, COLOR_ACCENT, COLOR_NEGATIVE, '#7209B7', '#06D6A0', '#A3B3C2']
+    # 카테고리 색상 대비를 높여 명확하게 표시
+    color_sequence = [COLOR_PRIMARY, '#FF6B6B', '#FFD166', '#4D94B2', '#06D6A0', '#A3B3C2']
     
     fig = go.Figure(data=[go.Pie(
         labels=chart_data.index, 
@@ -535,10 +536,17 @@ def main():
                 background-color: {COLOR_BACKGROUND};
                 font-family: 'Noto Sans KR', sans-serif;
             }}
+            /* 사이드바 배경색과 메인 배경색 구분 (기본값인 흰색 대신 푸른 계열 배경 유지) */
+            [data-testid="stSidebar"] {{
+                background-color: #ECF0F3; /* 배경보다 살짝 밝은 회색으로 구분 */
+                padding: 1rem;
+            }}
+            
             /* Streamlit의 기본 흰색 배경 컨테이너 오버라이드 */
             [data-testid="stVerticalBlock"] {{
                 background-color: transparent;
             }}
+            
             /* metric value 폰트 크기 및 색상 조정 (Kpi-value 참고) */
             [data-testid="stMetricValue"] {{
                 font-size: 1.8rem; /* 기존보다 크게 */
@@ -559,6 +567,34 @@ def main():
                 margin-bottom: 1rem;
                 padding-bottom: 0.5rem;
                 border-bottom: 3px solid {COLOR_PRIMARY};
+            }}
+            /* Expander 헤더 스타일 조정 */
+            .stExpander {{
+                border: 1px solid #E0E0E0; /* Expander 경계선 */
+                border-left: 5px solid {COLOR_EXPANDER_BORDER}; /* 왼쪽 굵은 선으로 강조 */
+                background-color: white; /* 내부 배경색 흰색 */
+                border-radius: 0.5rem;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.05); /* 은은한 그림자 */
+                margin-bottom: 8px;
+                padding-left: 0.5rem;
+            }}
+            /* Expander 내부 컨텐츠 padding 조정 */
+            .stExpander > div:first-child {{
+                padding: 0.5rem;
+            }}
+            /* Expander 내부의 흰색 배경 제거 */
+            .stExpander > div:last-child > div {{
+                background-color: transparent !important;
+            }}
+            /* VOC 인용구 스타일 */
+            .voc-quote {{
+                border-left: 4px solid {COLOR_ACCENT}; 
+                padding-left: 15px; 
+                margin: 15px 0; 
+                background-color: {COLOR_QUOTE_BG}; 
+                border-radius: 4px; 
+                padding-top: 10px; 
+                padding-bottom: 10px;
             }}
         </style>
     """, unsafe_allow_html=True)
@@ -607,7 +643,7 @@ def main():
     # ------- 사이드바 -------
     with st.sidebar:
         st.markdown("---")
-        st.subheader("📅 기간 선택")
+        st.markdown(f"<h3 style='color:{COLOR_DARK}; font-weight: 700; margin-bottom: 10px;'>📅 기간 선택</h3>", unsafe_allow_html=True)
 
         if voc_df.empty:
             st.warning("VOC 데이터가 없습니다.")
@@ -641,7 +677,8 @@ def main():
                 st.button("최근 30일", use_container_width=True, on_click=lambda:_set_days(30))
 
         st.markdown("---")
-        st.subheader("🕹️ 게임 및 플랫폼 선택")
+        st.markdown(f"<h3 style='color:{COLOR_DARK}; font-weight: 700; margin-bottom: 10px;'>🕹️ 게임 및 플랫폼 선택</h3>", unsafe_allow_html=True)
+
 
         game_filters = {
             "뉴맞고": ["뉴맞고 (전체)", "뉴맞고 MOB", "뉴맞고 PC", "뉴맞고 for kakao"],
@@ -750,61 +787,58 @@ def main():
     # ===== 대시보드 상단 요약 (기간 전체 VOC 건수 제거, 디자인 적용) =====
     st.markdown(f'<h2 class="section-header-custom">🚀 핵심 지표 요약</h2>', unsafe_allow_html=True)
     
-    with st.container(border=False):
+    # 1. 전일 VOC 컨디션 요약 및 심층 분석 (하나의 시각적 카드 컨테이너)
+    with st.container():
+        # HTML 카드 시작
+        st.markdown(f"""
+            <div style="background-color: white; border-radius: 0.75rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-bottom: 20px;">
+                <h3 style='color:{COLOR_DARK}; font-weight: 700; font-size: 1.5rem; margin-bottom: 1rem;'>전일 VOC 컨디션 분석</h3>
+            """, unsafe_allow_html=True)
         
-        # 1. 전일 VOC 컨디션 요약 및 심층 분석 (하나의 컨테이너로 시각적 그룹핑)
         current_kdate = datetime.now(KST).date()
         yesterday_date = current_kdate - timedelta(days=1)
-        
-        st.markdown(f"<h3 style='color:{COLOR_DARK}; font-size: 1.5rem; font-weight: 500;'>전일 VOC 컨디션 ({yesterday_date.strftime('%Y-%m-%d')})</h3>", unsafe_allow_html=True)
+        st.markdown(f"<p style='color: #6c757d; font-size: 1rem; margin-bottom: 20px;'>기준일: **{yesterday_date.strftime('%Y-%m-%d')}**</p>", unsafe_allow_html=True)
         
         game_summaries = get_yesterday_summary_by_game(voc_df, current_kdate)
         games_to_show = ["뉴맞고", "섯다", "포커", "쇼다운홀덤", "뉴베가스"]
         
         # 1-1. 게임별 요약 (5개 컬럼 메트릭)
-        # 흰색 배경과 그림자 스타일을 적용할 컨테이너 (예시 HTML의 kpi-card 역할)
-        with st.container():
-            st.markdown(f"""
-                <div style="background-color: white; border-radius: 0.75rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-bottom: 20px;">
-                    <h4 style="color:{COLOR_DARK}; font-weight: bold; margin-bottom: 1rem;">게임별 전일 VOC 현황</h4>
-                """, unsafe_allow_html=True)
-            
-            cols = st.columns(len(games_to_show))
-            
-            for i, game in enumerate(games_to_show):
-                summary_data = game_summaries.get(game, {})
-                
-                if not summary_data:
-                    cols[i].caption(f"**{game}**")
-                    cols[i].write("데이터 없음")
-                    continue
-
-                count = summary_data['count']
-                delta_val = summary_data['delta']
-                icon = summary_data['icon']
-                
-                # 메트릭 출력 (VOC 건수 및 전일 대비 증감)
-                cols[i].metric(
-                    label=f"{icon} {game}", 
-                    value=f"{count} 건", 
-                    delta=f"{delta_val} 건" if delta_val != 0 else None,
-                    delta_color="inverse" if delta_val > 0 else "normal"
-                )
-                
-                # 한 줄 요약 텍스트 (메트릭 바로 아래에 작게 표시)
-                summary_text = summary_data['sample']['인사이트'].split(':')[0]
-                
-                color = "green"
-                if "🔥 심각" in summary_text: color = COLOR_NEGATIVE # 심각 빨간색
-                elif "⚠️ 주의" in summary_text: color = COLOR_ACCENT  # 주의 노란색
-                
-                cols[i].markdown(f'<p style="color:{color}; font-size: 0.9em; margin-top: -10px;">{summary_text}</p>', unsafe_allow_html=True)
-            
-            st.markdown("</div>", unsafe_allow_html=True)
+        cols = st.columns(len(games_to_show))
         
-        st.markdown(f"<h3 style='color:{COLOR_DARK}; font-size: 1.5rem; font-weight: 500; margin-top: 30px;'>🔍 게임별 상세 이슈 분석</h3>", unsafe_allow_html=True)
+        for i, game in enumerate(games_to_show):
+            summary_data = game_summaries.get(game, {})
+            
+            if not summary_data:
+                cols[i].caption(f"**{game}**")
+                cols[i].write("데이터 없음")
+                continue
+
+            count = summary_data['count']
+            delta_val = summary_data['delta']
+            icon = summary_data['icon']
+            
+            # 메트릭 출력 (VOC 건수 및 전일 대비 증감)
+            cols[i].metric(
+                label=f"{icon} {game}", 
+                value=f"{count} 건", 
+                delta=f"{delta_val} 건" if delta_val != 0 else None,
+                delta_color="inverse" if delta_val > 0 else "normal"
+            )
+            
+            # 한 줄 요약 텍스트 (메트릭 바로 아래에 작게 표시)
+            summary_text = summary_data['sample']['인사이트'].split(':')[0]
+            
+            color = "green"
+            if "🔥 심각" in summary_text: color = COLOR_NEGATIVE # 심각 빨간색
+            elif "⚠️ 주의" in summary_text: color = COLOR_ACCENT  # 주의 노란색
+            
+            cols[i].markdown(f'<p style="color:{color}; font-size: 0.9em; margin-top: -10px;">{summary_text}</p>', unsafe_allow_html=True)
+        
+        st.markdown("<hr style='border-top: 1px solid #E0E0E0; margin-top: 1.5rem; margin-bottom: 1.5rem;'>", unsafe_allow_html=True) # 요약 메트릭과 심층 분석 구분선
 
         # 1-2. 게임별 심층 분석 (Expander를 사용하여 깔끔하게)
+        st.markdown(f"<h4 style='color:{COLOR_DARK}; font-weight: 700; font-size: 1.2rem; margin-bottom: 1rem;'>🔍 게임별 상세 이슈 분석</h4>", unsafe_allow_html=True)
+
         for game in games_to_show:
             summary_data = game_summaries.get(game, {})
             
@@ -817,14 +851,15 @@ def main():
             # Expander 제목에 핵심 정보 포함
             expander_title = f"{icon} **{game}** | **VOC: {summary_data['count']} 건** | {sample['인사이트']}"
             
+            # st.expander에 직접 style을 적용하기 어려우므로, Custom CSS가 적용된 클래스 사용
             with st.expander(expander_title):
                 # 1. 핵심 VOC 샘플
                 st.markdown(f"**주요 이슈 태그:** <span style='color:{COLOR_PRIMARY};'>{sample['태그']}</span>", unsafe_allow_html=True)
                 st.markdown(f"**VOC 제목:** {sample['제목']}")
                 
-                # 예시 HTML의 blockquote 스타일 적용
+                # HTML 블록 (인용구 스타일 적용)
                 st.markdown(f"""
-                    <div style="border-left: 4px solid {COLOR_ACCENT}; padding-left: 15px; margin: 15px 0; background-color: #FAFAFA; border-radius: 4px; padding-top: 10px; padding-bottom: 10px;">
+                    <div class="voc-quote">
                         <p style="font-style: italic; color: {COLOR_DARK}; margin-bottom: 0;">
                             {sample['내용']}
                         </p>
@@ -843,7 +878,9 @@ def main():
                 else:
                     st.info(f"**정상 컨디션** | 전일 VOC 컨디션 양호. {sample['태그']} 관련 VOC는 일반적인 문의 수준입니다. 필요 시 워크시트에서 상세 내역을 확인하세요.")
 
-    st.markdown("---")
+        st.markdown("</div>", unsafe_allow_html=True) # HTML 카드 끝
+
+    st.markdown("<hr style='border-top: 1px solid #A3B3C2;'>", unsafe_allow_html=True)
 
 
     # ===== 탭 =====
@@ -853,17 +890,23 @@ def main():
     with tabs[0]:
         st.markdown(f'<h2 class="section-header-custom">📊 카테고리 분석</h2>', unsafe_allow_html=True)
         
-        c1, c2 = st.columns(2)
-        
-        # 날짜 범위 설정 (기간 선택 사이드바를 활용)
-        if not date_range:
-            st.warning("유효한 조회 기간이 설정되지 않았습니다.")
-        else:
-            with st.container(border=False):
+        with st.container():
+            st.markdown(f"""
+                <div style="background-color: white; border-radius: 0.75rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-top: 20px; margin-bottom: 20px;">
+                """, unsafe_allow_html=True)
+            
+            c1, c2 = st.columns(2)
+            
+            # 날짜 범위 설정 (기간 선택 사이드바를 활용)
+            if not date_range:
+                st.warning("유효한 조회 기간이 설정되지 않았습니다.")
+            else:
                 with c1:
                     st.plotly_chart(create_trend_chart(view_df, (start_dt, end_dt), "일자별 VOC 발생 추이"), use_container_width=True)
                 with c2:
                     st.plotly_chart(create_donut_chart(view_df, "주요 L1 카테고리", group_by='L1 태그'), use_container_width=True)
+            
+            st.markdown("</div>", unsafe_allow_html=True)
 
         # VOC 원본 데이터 섹션 (카드 스타일 적용)
         with st.container():
@@ -968,7 +1011,7 @@ def main():
                         for c in r.columns:
                             r[c] = r[c].astype(str)
                         st.download_button(
-                            "📥 검색 결과 다운로드",
+                            "📥 CSV 다운로드",
                             data=r.to_csv(index=False).encode("utf-8-sig"),
                             file_name=f"voc_search_{last_keyword}_{datetime.now(KST).strftime('%Y%m%d')}.csv",
                             mime="text/csv"
@@ -998,7 +1041,10 @@ def main():
         if payment_auth_df.empty:
             st.warning("해당 기간에 결제 또는 인증 관련 VOC가 없습니다.")
         else:
-            with st.container(border=False):
+            with st.container():
+                st.markdown(f"""
+                    <div style="background-color: white; border-radius: 0.75rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-top: 20px; margin-bottom: 20px;">
+                    """, unsafe_allow_html=True)
                 c1, c2 = st.columns(2)
                 with c1:
                     st.plotly_chart(create_trend_chart(payment_auth_df, (start_dt, end_dt), "결제/인증 관련 VOC 발생 추이"), use_container_width=True)
@@ -1011,6 +1057,7 @@ def main():
                     )
                     fig_l2_payment.update_layout(height=300, plot_bgcolor='white', paper_bgcolor='white', font=dict(family='Noto Sans KR, sans-serif'))
                     st.plotly_chart(fig_l2_payment, use_container_width=True)
+                st.markdown("</div>", unsafe_allow_html=True)
 
             with st.container():
                 st.markdown(f"""

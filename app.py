@@ -393,7 +393,6 @@ def get_yesterday_summary_by_game(voc_df: pd.DataFrame, current_date: date) -> d
         neg_ratio = neg_count / count_d1 * 100 if count_d1 > 0 else 0
         
         # 핵심 VOC 샘플 추출 (부정 감성 VOC 중 가장 문의내용이 긴 것)
-        # 가장 길다는 것은 상세한 불만이 담겨있을 확률이 높음
         sample_voc = {"제목": "VOC 없음", "내용": "---", "태그": "---", "인사이트": "전일 VOC 발생 기록 없음"}
         
         if not neg_df_d1.empty:
@@ -416,11 +415,11 @@ def get_yesterday_summary_by_game(voc_df: pd.DataFrame, current_date: date) -> d
         # 개선 인사이트 자동 생성 (키워드/비율 기반)
         if count_d1 > 0:
             if neg_ratio >= 30:
-                summary = f"🔥 {neg_ratio:.0f}%가 부정 VOC. **{sample_voc['태그']}** 관련 심각 이슈 발생 가능성, 즉시 확인 요망."
+                summary = f"🔥 심각: 부정 VOC {neg_ratio:.0f}%, **{sample_voc['태그']}** 긴급 확인 필요"
             elif neg_ratio >= 10:
-                summary = f"⚠️ {neg_ratio:.0f}%가 부정 VOC. **{sample_voc['태그']}** 태그 중심으로 모니터링 필요."
+                summary = f"⚠️ 주의: 부정 VOC {neg_ratio:.0f}%, **{sample_voc['태그']}** 모니터링 필요"
             else:
-                summary = f"컨디션 양호. 주요 이슈 태그: **{sample_voc['태그']}**"
+                summary = f"🟢 양호: 컨디션 안정, 주요 이슈 태그: **{sample_voc['태그']}**"
             sample_voc["인사이트"] = summary
         
         results[game] = {
@@ -697,21 +696,23 @@ def main():
             
         delta = len(view_df) - len(prev_df)
 
-        st.markdown(f"**조회 기간: {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}**")
-        st.metric("총 VOC 건수 (기간 전체)", f"{len(view_df)} 건", f"{delta} 건 (이전 동기간 대비)")
+        col_total, _ = st.columns([1.5, 3.5])
+        with col_total:
+            st.markdown(f"**조회 기간: {start_dt.strftime('%Y-%m-%d')} ~ {end_dt.strftime('%Y-%m-%d')}**")
+            st.metric("총 VOC 건수 (기간 전체)", f"{len(view_df)} 건", f"{delta} 건 (이전 동기간 대비)")
         st.markdown("---")
 
-        # 2. 게임별 전일 VOC 컨디션 요약
+        # 2. 게임별 전일 VOC 컨디션 요약 (한눈에 보이도록 압축)
         current_kdate = datetime.now(KST).date()
         yesterday_date = current_kdate - timedelta(days=1)
-        st.subheader(f"🎮 전일 VOC 컨디션: 게임별 심층 분석 ({yesterday_date.strftime('%Y-%m-%d')})")
+        st.subheader(f"🎮 전일 VOC 컨디션: 게임별 요약 ({yesterday_date.strftime('%Y-%m-%d')})")
         
         game_summaries = get_yesterday_summary_by_game(voc_df, current_kdate)
         games_to_show = ["뉴맞고", "섯다", "포커", "쇼다운홀덤", "뉴베가스"]
         
+        # 5개 게임을 한 줄에 표시
         cols = st.columns(len(games_to_show))
         
-        # 게임별 메트릭 출력 (Top Row)
         for i, game in enumerate(games_to_show):
             summary_data = game_summaries.get(game, {})
             
@@ -723,46 +724,69 @@ def main():
             count = summary_data['count']
             delta_val = summary_data['delta']
             icon = summary_data['icon']
-
+            
             # 메트릭 출력 (VOC 건수 및 전일 대비 증감)
             cols[i].metric(
                 label=f"{icon} **{game}**", 
                 value=f"{count} 건", 
-                delta=f"{delta_val} 건 (전일 대비)" if delta_val != 0 else None,
+                delta=f"{delta_val} 건" if delta_val != 0 else None,
                 delta_color="inverse" if delta_val > 0 else "normal"
             )
+            
+            # 한 줄 요약 텍스트 (메트릭 바로 아래에 작게 표시)
+            summary_text = summary_data['sample']['인사이트'].split(':')[0]
+            
+            color = "green"
+            if "🔥 심각" in summary_text: color = "red"
+            elif "⚠️ 주의" in summary_text: color = "orange"
+            
+            cols[i].markdown(f'<p style="color:{color}; font-size: 0.8em; margin-top: -10px;">{summary_text}</p>', unsafe_allow_html=True)
+            
+    st.markdown("---")
+
+    # 3. 게임별 심층 분석 (Expander를 사용하여 깔끔하게)
+    st.subheader(f"🔍 게임별 상세 이슈 분석")
+
+    for game in games_to_show:
+        summary_data = game_summaries.get(game, {})
         
-        st.markdown("---")
+        if not summary_data or summary_data['count'] == 0:
+            continue
 
-        # 게임별 심층 분석 (Bottom Row)
-        for game in games_to_show:
-            summary_data = game_summaries.get(game, {})
+        sample = summary_data['sample']
+        icon = summary_data['icon']
+        
+        # Expander 제목에 핵심 정보 포함
+        expander_title = f"{icon} **{game}** | **VOC: {summary_data['count']} 건** | {sample['인사이트']}"
+        
+        with st.expander(expander_title):
+            # 1. 핵심 VOC 샘플
+            st.markdown(f"**주요 이슈 태그:** `{sample['태그']}`")
+            st.markdown(f"**VOC 제목:** {sample['제목']}")
             
-            if not summary_data or summary_data['count'] == 0:
-                continue # VOC 없는 게임은 심층 분석 스킵
-
-            sample = summary_data['sample']
-            icon = summary_data['icon']
+            # HTML 블록처럼 보이도록 구성
+            st.markdown(f"""
+                <div style="border-left: 4px solid #F0F2F6; padding-left: 15px; margin: 15px 0; background-color: #FAFAFA; border-radius: 4px;">
+                    <p style="font-style: italic; color: #555555; margin-bottom: 0;">
+                        {sample['내용']}
+                    </p>
+                </div>
+                """, unsafe_allow_html=True)
             
-            # Expander를 사용하여 디자인 유사하게 구성
-            with st.expander(f"{icon} **{game}**: {sample['인사이트']}", expanded=True):
-                # 1. 핵심 VOC 샘플
-                st.markdown(f"**{sample['태그']}** 관련 VOC 샘플")
-                st.markdown(f'> **"{sample["내용"]}"**')
-                
-                # 2. 개선 인사이트
-                st.markdown("---")
-                st.markdown(f"**개선 인사이트 (자동 생성):**")
-                
-                # 부정 비율에 따른 자동 인사이트
-                if summary_data['neg_ratio'] >= 30:
-                    st.error(f"**심각** | 전일 VOC 중 {summary_data['neg_ratio']:.0f}%가 부정 감성. {sample['태그']} 관련 이슈 발생 시, 영향도 파악 및 긴급 대응이 필요합니다.")
-                elif summary_data['neg_ratio'] >= 10:
-                    st.warning(f"**주의** | 전일 VOC 중 {summary_data['neg_ratio']:.0f}%가 부정 감성. {sample['태그']} 관련 불만이 증가 추세일 수 있습니다. 해당 원본 VOC 검토를 시작하세요.")
-                else:
-                    st.info(f"**양호** | 전일 VOC 컨디션 양호. {sample['태그']} 관련 VOC는 일반적인 문의 수준입니다. 필요 시 워크시트에서 상세 내역을 확인하세요.")
+            # 2. 개선 인사이트
+            st.markdown("---")
+            st.markdown(f"**자동 분석 기반 개선 인사이트:**")
+            
+            # 부정 비율에 따른 자동 인사이트
+            if summary_data['neg_ratio'] >= 30:
+                st.error(f"**긴급 대응** | 전일 VOC 중 {summary_data['neg_ratio']:.0f}%가 부정 감성. {sample['태그']} 관련 이슈 발생 시, **영향도 파악 및 긴급 대응이 필요**합니다.")
+            elif summary_data['neg_ratio'] >= 10:
+                st.warning(f"**집중 모니터링** | 전일 VOC 중 {summary_data['neg_ratio']:.0f}%가 부정 감성. {sample['태그']} 관련 불만이 증가 추세일 수 있습니다. **해당 원본 VOC 검토를 시작**하세요.")
+            else:
+                st.info(f"**정상 컨디션** | 전일 VOC 컨디션 양호. {sample['태그']} 관련 VOC는 일반적인 문의 수준입니다. 필요 시 워크시트에서 상세 내역을 확인하세요.")
 
     st.markdown("---")
+
 
     # ===== 탭 =====
     tabs = st.tabs(["📊 카테고리 분석", "🔍 키워드 검색", "💳 결제/인증 리포트"])

@@ -602,11 +602,6 @@ def main():
                 box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); 
                 margin-bottom: 20px;
             }}
-            /* Streamlit이 자동으로 추가하는 컨테이너의 패딩을 제거하여 카드가 꽉 차게 보이도록 함 */
-            [data-testid="stVerticalBlock"] > div > div:not(.stExpander) {{
-                padding-top: 0px !important;
-                padding-bottom: 0px !important;
-            }}
         </style>
     """, unsafe_allow_html=True)
     
@@ -979,6 +974,10 @@ def main():
             st.caption("여러 키워드는 콤마(,)로 구분하여 검색할 수 있습니다. (예: 환불,결제 → '환불' 또는 '결제' 포함)")
             st.markdown("</div>", unsafe_allow_html=True) # End of Form Card
 
+        if submitted:
+            st.session_state.last_search_keyword = keyword
+
+        last_keyword = st.session_state.get("last_search_keyword", "")
         if last_keyword:
             keywords = [re.escape(k.strip()) for k in last_keyword.split(",") if k.strip()]
             if keywords:

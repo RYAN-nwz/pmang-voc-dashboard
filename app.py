@@ -602,6 +602,11 @@ def main():
                 box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); 
                 margin-bottom: 20px;
             }}
+            /* Streamlit이 자동으로 추가하는 불필요한 패딩/마진 제거 */
+            [data-testid="stVerticalBlock"] > div > div:not(.stExpander) {{
+                padding-top: 0px !important;
+                padding-bottom: 0px !important;
+            }}
         </style>
     """, unsafe_allow_html=True)
     
@@ -752,7 +757,7 @@ def main():
     
     # 선택된 항목이 없을 때
     if not selected:
-        # 빈 결과로 즉시 view_df를 설정하여 에러를 피함 (이전 오류 해결 로직)
+        # 빈 결과로 즉시 view_df를 설정하여 에러를 피함 (이전 오류 처리 및 재통합)
         filtered = pd.DataFrame(columns=voc_df.columns if not voc_df.empty else [])
         view_df = pd.DataFrame(columns=filtered.columns) # date_range 필터링을 건너뛰고 빈 상태로 설정
     else:

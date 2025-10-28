@@ -120,8 +120,8 @@ def get_gspread_client():
             else:
                 st.error("인증 정보를 찾을 수 없습니다. (Secrets 또는 service_account.json)")
                 st.stop()
-            return gspread.authorize(creds) # 이 부분이 들여쓰기 잘못되어 있어서 수정했습니다. (로컬 파일 인증 시)
-        return gspread.authorize(creds) # Secrets 인증 시
+            return gspread.authorize(creds)
+        return gspread.authorize(creds)
     except Exception as e:
         st.error("Google 인증 실패: Secrets 또는 service_account.json 구성을 확인하세요.")
         st.exception(e)
@@ -172,7 +172,7 @@ def submit_access_request(spreadsheet_id: str, email: str, name: str):
     if not df.empty and (df["email"].str.lower() == email.lower()).any():
         st.info("이미 요청되었거나 등록된 이메일입니다.")
         return
-    # ✅ KST 시간으로 기록
+    # KST 시간으로 기록
     ws.append_row([email, name, now_kst_str(), "pending", ""])
     st.success("접근 요청 완료! 관리자의 승인을 기다려주세요.")
     st.cache_data.clear()
@@ -184,7 +184,7 @@ def approve_user(spreadsheet_id: str, email: str):
     ws = get_or_create_user_mgmt_worksheet(ss)
     cell = ws.find(email)
     ws.update_cell(cell.row, 4, "approved")
-    # ✅ KST 시간으로 기록
+    # KST 시간으로 기록
     ws.update_cell(cell.row, 5, now_kst_str())
     st.toast(f"{email} 승인 완료")
     st.cache_data.clear()
@@ -353,6 +353,55 @@ def load_voc_data(spreadsheet_id: str) -> pd.DataFrame:
         st.error("VOC 데이터 로딩 오류")
         st.exception(e)
         return pd.DataFrame()
+
+# 🚨 [새로운 함수] 전일 VOC 핵심 요약 데이터 생성
+def get_yesterday_summary(voc_df: pd.DataFrame, current_date: date) -> dict:
+    """전일 VOC 데이터를 분석하여 건수, 요약, 핵심 키워드를 반환합니다."""
+    # current_date는 Streamlit 실행 시점의 KST 날짜
+    yesterday = current_date - timedelta(days=1)
+    
+    # 데이터 유효성 검사
+    if voc_df.empty or '날짜_dt' not in voc_df.columns:
+        return {"count": 0, "summary": "데이터 로딩 오류 또는 VOC 데이터 없음", "keywords": []}
+        
+    yesterday_df = voc_df[voc_df["날짜_dt"].dt.date == yesterday].copy()
+
+    if yesterday_df.empty:
+        return {"count": 0, "summary": "전일 VOC 발생 기록 없음 (Good!)", "keywords": []}
+
+    # 1. L2 태그 기반 핵심 이슈 추출 (Top 2)
+    l2_counts = yesterday_df["L2 태그"].value_counts(normalize=True).nlargest(2)
+    l2_summary = ", ".join([f"{k} ({v*100:.1f}%)" for k, v in l2_counts.items()])
+    
+    # 2. 부정 감성 기반 핵심 키워드 추출
+    neg_df = yesterday_df[yesterday_df["감성"] == "부정"]
+    
+    top_keywords = []
+    if not neg_df.empty:
+        texts = [clean_text_for_wordcloud(x) for x in neg_df["문의내용"]]
+        s = " ".join(texts).strip()
+        if s:
+            # WordCloud의 단어 빈도수 계산 로직을 사용
+            stopwords = set(['문의','게임','피망','고객','내용','확인','답변','부탁','처리','관련','안녕하세요'])
+            wc_instance = WordCloud(stopwords=stopwords)
+            # process_text는 (단어: 빈도) 딕셔너리를 반환
+            word_counts = wc_instance.process_text(s)
+            
+            # Top 3 키워드 추출
+            top_keywords = [item[0] for item in sorted(word_counts.items(), key=lambda item: item[1], reverse=True)[:3]]
+            
+    # 3. 종합 요약 메시지 생성
+    if neg_df.empty or not top_keywords:
+        main_summary = f"주요 이슈 태그: {l2_summary}"
+    else:
+        main_summary = f"주요 이슈: {l2_summary}. 부정 키워드: {', '.join(top_keywords)}"
+
+    return {
+        "count": len(yesterday_df),
+        "summary": main_summary,
+        "keywords": top_keywords,
+    }
+
 
 # =============================
 # 5) 차트
@@ -560,9 +609,9 @@ def main():
     # 필터 적용
     selected = [opt for opt in all_child if st.session_state.get(opt, True)]
     
-    # 🚨 수정된 부분: selected가 비어있을 때 filtered를 빈 DataFrame으로 바로 설정
+    # 선택된 항목이 없을 때
     if not selected:
-        # 빈 결과로 즉시 view_df를 설정하여 에러를 피함
+        # 빈 결과로 즉시 view_df를 설정하여 에러를 피함 (이전 오류 해결 로직)
         filtered = pd.DataFrame(columns=voc_df.columns if not voc_df.empty else [])
         view_df = pd.DataFrame(columns=filtered.columns) # date_range 필터링을 건너뛰고 빈 상태로 설정
     else:
@@ -587,11 +636,10 @@ def main():
             st.sidebar.button("로그아웃", on_click=st.logout)
             return
 
-        # 날짜 필터링 (filtered가 비어있지 않고 '날짜_dt' 컬럼이 datetimelike 타입인 경우)
+        # 날짜 필터링
         start_dt = pd.to_datetime(date_range[0]).date()
         end_dt = pd.to_datetime(date_range[1]).date()
         
-        # filtered는 voc_df의 subset이므로 '날짜_dt' 타입이 보장됨 (load_voc_data에서 변환함)
         view_df = filtered[(filtered["날짜_dt"].dt.date >= start_dt) & (filtered["날짜_dt"].dt.date <= end_dt)].copy()
 
     if view_df.empty:
@@ -599,7 +647,7 @@ def main():
         st.sidebar.button("로그아웃", on_click=st.logout)
         return
 
-    # ===== 대시보드 상단 요약 =====
+    # ===== 대시보드 상단 요약 (전일 VOC 컨디션 요약으로 대체) =====
     with st.container(border=True):
         st.header("🚀 핵심 지표 요약")
         start_dt = pd.to_datetime(date_range[0]).date()
@@ -611,19 +659,42 @@ def main():
         prev_end   = end_dt - timedelta(days=period_days)
         
         # 이전 기간 데이터셋 생성
-        # filtered가 비어있을 때는 prev_df도 비어있게 처리
         if '날짜_dt' in filtered.columns and not filtered.empty:
             prev_df = filtered[(filtered["날짜_dt"].dt.date >= prev_start) & (filtered["날짜_dt"].dt.date <= prev_end)]
         else:
             prev_df = pd.DataFrame() 
             
         delta = len(view_df) - len(prev_df)
-
+        
+        # 🚨 [수정된 부분] col2에 전일 요약 추가
         col1, col2 = st.columns([1, 2])
+        
+        # col1: 전체 기간 VOC 건수
         with col1:
             st.metric("총 VOC 건수", f"{len(view_df)} 건", f"{delta} 건 (이전 동기간 대비)")
+        
+        # col2: 전일 VOC 컨디션 요약
+        yesterday_date = datetime.now(KST).date() - timedelta(days=1)
+        yesterday_data = get_yesterday_summary(voc_df, datetime.now(KST).date())
+        
         with col2:
-            st.plotly_chart(create_donut_chart(view_df, "주요 L2 카테고리 TOP 5"), use_container_width=True)
+            with st.container(border=True):
+                st.subheader(f"🗓️ 전일 VOC 컨디션 요약 ({yesterday_date.strftime('%Y-%m-%d')})")
+                
+                c2_1, c2_2 = st.columns([1, 2.5])
+                with c2_1:
+                    # 전일 VOC 건수
+                    st.metric("전일 VOC 건수", f"{yesterday_data['count']} 건", delta=None)
+
+                with c2_2:
+                    # 핵심 이슈 요약
+                    st.markdown(f"**핵심 이슈:** {yesterday_data['summary']}")
+                    
+                    # 키워드 (선택적)
+                    if yesterday_data['keywords']:
+                        keywords_str = " ".join([f"`{k}`" for k in yesterday_data['keywords']])
+                        st.caption(f"주요 부정 키워드: {keywords_str}")
+
 
     st.markdown("---")
 

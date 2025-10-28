@@ -603,6 +603,7 @@ def main():
                 margin-bottom: 20px;
             }}
             /* Streamlit이 자동으로 추가하는 불필요한 패딩/마진 제거 */
+            /* 이 부분은 유지하여 전체적인 레이아웃 간격을 줄입니다. */
             [data-testid="stVerticalBlock"] > div > div:not(.stExpander) {{
                 padding-top: 0px !important;
                 padding-bottom: 0px !important;
@@ -794,20 +795,22 @@ def main():
         return
 
 
-    # ===== 대시보드 상단 요약 (기간 전체 VOC 건수 제거, 디자인 적용) =====
-    st.markdown(f'<h2 class="section-header-custom">🚀 핵심 지표 요약</h2>', unsafe_allow_html=True)
+    # ===== 대시보드 상단 요약 (빈 칸 제거 및 디자인 적용) =====
     
-    # 1. 전일 VOC 컨디션 요약 및 심층 분석 (하나의 시각적 카드 컨테이너)
+    # 1. 전일 VOC 컨디션 요약 및 심층 분석 섹션
     with st.container():
         # HTML 카드 시작
         st.markdown(f"""
             <div class="main-card">
             """, unsafe_allow_html=True)
         
+        # 🚨 [수정]: '핵심 지표 요약' 헤더도 이 카드 안에 포함
+        st.markdown(f'<h2 style="font-size: 1.75rem; font-weight: 700; color:{COLOR_DARK}; margin-bottom: 1rem; padding-bottom: 0.5rem; border-bottom: 3px solid {COLOR_PRIMARY};">🚀 핵심 지표 요약</h2>', unsafe_allow_html=True)
+        
         current_kdate = datetime.now(KST).date()
         yesterday_date = current_kdate - timedelta(days=1)
         
-        st.markdown(f"<h3 style='color:{COLOR_DARK}; font-weight: 700; font-size: 1.5rem; margin-bottom: 1rem;'>전일 VOC 컨디션 분석</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 style='color:{COLOR_DARK}; font-weight: 700; font-size: 1.5rem; margin-top: 1rem; margin-bottom: 1rem;'>전일 VOC 컨디션 분석</h3>", unsafe_allow_html=True)
         st.markdown(f"<p style='color: #6c757d; font-size: 1rem; margin-bottom: 20px;'>기준일: **{yesterday_date.strftime('%Y-%m-%d')}**</p>", unsafe_allow_html=True)
         
         game_summaries = get_yesterday_summary_by_game(voc_df, current_kdate)

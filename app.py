@@ -23,14 +23,6 @@ st.set_page_config(page_title="웹보드 VOC 대시보드", page_icon=LOGO_IMAGE
 
 KST = ZoneInfo("Asia/Seoul")
 
-# 🎨 [디자인 팔레트 정의] - 전문적이고 고급진 색감 적용
-COLOR_PRIMARY = "#118AB2" # 메인 색상: 시안 계열 (전문성)
-COLOR_DARK = "#073B4C"     # 진한 네이비 (텍스트, 헤더)
-COLOR_BACKGROUND = "#F0F4F8" # 밝은 배경
-COLOR_ACCENT = "#FFD166"   # 강조색: 노란색
-COLOR_EXPANDER_BORDER = "#4D94B2" # Expander 좌측 테두리 색상
-COLOR_QUOTE_BG = "#FAFAFA" # 인용구 배경
-
 # =============================
 # 1) 유틸 (이미지, URL/키 정규화)
 # =============================
@@ -383,7 +375,7 @@ def get_yesterday_summary_by_game(voc_df: pd.DataFrame, current_date: date) -> d
     daily_counts = voc_df[voc_df["날짜_dt"].dt.date.isin([yesterday, two_days_ago])]
     daily_counts = daily_counts.groupby([daily_counts["날짜_dt"].dt.date, "게임"]).size().reset_index(name="count")
     
-    counts_d1 = daily_counts[daily_counts["날날짜_dt"] == yesterday].set_index("게임")["count"].to_dict()
+    counts_d1 = daily_counts[daily_counts["날짜_dt"] == yesterday].set_index("게임")["count"].to_dict()
     counts_d2 = daily_counts[daily_counts["날짜_dt"] == two_days_ago].set_index("게임")["count"].to_dict()
 
     for game in games:
@@ -453,17 +445,11 @@ def create_trend_chart(data, date_range, title):
     merged = pd.merge(range_df, daily, on="날짜_dt", how="left").fillna(0)
     merged["건수"] = merged["건수"].astype(int)
     fig = px.line(
-        merged, x="날짜_dt", y="건수", title=f"<b style='color:{COLOR_DARK};'>{title}</b>",
-        labels={'날짜_dt': '날짜', '건수': 'VOC 건수'}, markers=True, text="건수",
-        color_discrete_sequence=[COLOR_PRIMARY]
+        merged, x="날짜_dt", y="건수", title=f"<b>{title}</b>",
+        labels={'날짜_dt': '날짜', '건수': 'VOC 건수'}, markers=True, text="건수"
     )
     fig.update_traces(textposition="top center")
-    fig.update_layout(
-        xaxis_title="", yaxis_title="건수", height=300,
-        plot_bgcolor='white', paper_bgcolor='white',
-        font=dict(family='Noto Sans KR, sans-serif'),
-        margin=dict(t=50)
-    )
+    fig.update_layout(xaxis_title="", yaxis_title="건수", height=300)
     return fig
 
 def create_donut_chart(data, title, group_by='L2 태그'):
@@ -474,27 +460,8 @@ def create_donut_chart(data, title, group_by='L2 태그'):
         chart_data = pd.concat([top4, pd.Series([others], index=["기타"])])
     else:
         chart_data = counts
-        
-    # 카테고리 색상 대비를 높여 명확하게 표시
-    color_sequence = [COLOR_PRIMARY, '#FF6B6B', '#FFD166', '#4D94B2', '#06D6A0', '#A3B3C2']
-    
-    fig = go.Figure(data=[go.Pie(
-        labels=chart_data.index, 
-        values=chart_data.values, 
-        hole=.6, 
-        textinfo='label+percent', 
-        insidetextorientation='radial',
-        marker=dict(colors=color_sequence)
-    )])
-    
-    fig.update_layout(
-        title_text=f"<b style='color:{COLOR_DARK};'>{title}</b>", 
-        showlegend=False, 
-        height=300, 
-        margin=dict(l=20, r=20, t=60, b=20),
-        plot_bgcolor='white', paper_bgcolor='white',
-        font=dict(family='Noto Sans KR, sans-serif')
-    )
+    fig = go.Figure(data=[go.Pie(labels=chart_data.index, values=chart_data.values, hole=.6, textinfo='label+percent', insidetextorientation='radial')])
+    fig.update_layout(title_text=f"<b>{title}</b>", showlegend=False, height=300, margin=dict(l=20, r=20, t=60, b=20))
     return fig
 
 def clean_text_for_wordcloud(text):
@@ -528,77 +495,6 @@ def mask_phone_number(text):
 # 6) MAIN
 # =============================
 def main():
-    # 🎨 [디자인 적용: 폰트 및 기본 배경]
-    st.markdown(f"""
-        <style>
-            @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;700;900&display=swap');
-            html, body, [data-testid="stAppViewContainer"] {{
-                background-color: {COLOR_BACKGROUND};
-                font-family: 'Noto Sans KR', sans-serif;
-            }}
-            /* 사이드바 배경색과 메인 배경색 구분 (기본값인 흰색 대신 푸른 계열 배경 유지) */
-            [data-testid="stSidebar"] {{
-                background-color: #ECF0F3; /* 배경보다 살짝 밝은 회색으로 구분 */
-                padding: 1rem;
-            }}
-            
-            /* Streamlit의 기본 흰색 배경 컨테이너 오버라이드 */
-            [data-testid="stVerticalBlock"] {{
-                background-color: transparent;
-            }}
-            
-            /* metric value 폰트 크기 및 색상 조정 (Kpi-value 참고) */
-            [data-testid="stMetricValue"] {{
-                font-size: 1.8rem; /* 기존보다 크게 */
-                font-weight: 900;
-                color: {COLOR_PRIMARY};
-            }}
-            /* metric label 폰트 크기 및 색상 조정 (Kpi-label 참고) */
-            [data-testid="stMetricLabel"] label {{
-                font-size: 1rem;
-                color: {COLOR_DARK};
-                font-weight: bold;
-            }}
-            /* 섹션 제목 스타일 */
-            .section-header-custom {{
-                font-size: 1.75rem;
-                font-weight: 700;
-                color: {COLOR_DARK};
-                margin-bottom: 1rem;
-                padding-bottom: 0.5rem;
-                border-bottom: 3px solid {COLOR_PRIMARY};
-            }}
-            /* Expander 헤더 스타일 조정 */
-            .stExpander {{
-                border: 1px solid #E0E0E0; /* Expander 경계선 */
-                border-left: 5px solid {COLOR_EXPANDER_BORDER}; /* 왼쪽 굵은 선으로 강조 */
-                background-color: white; /* 내부 배경색 흰색 */
-                border-radius: 0.5rem;
-                box-shadow: 0 1px 3px rgba(0,0,0,0.05); /* 은은한 그림자 */
-                margin-bottom: 8px;
-                padding-left: 0.5rem;
-            }}
-            /* Expander 내부 컨텐츠 padding 조정 */
-            .stExpander > div:first-child {{
-                padding: 0.5rem;
-            }}
-            /* Expander 내부의 흰색 배경 제거 */
-            .stExpander > div:last-child > div {{
-                background-color: transparent !important;
-            }}
-            /* VOC 인용구 스타일 */
-            .voc-quote {{
-                border-left: 4px solid {COLOR_ACCENT}; 
-                padding-left: 15px; 
-                margin: 15px 0; 
-                background-color: {COLOR_QUOTE_BG}; 
-                border-radius: 4px; 
-                padding-top: 10px; 
-                padding-bottom: 10px;
-            }}
-        </style>
-    """, unsafe_allow_html=True)
-    
     # 로그인
     require_login()
     me = current_user()
@@ -613,7 +509,7 @@ def main():
         st.markdown(
             f'<div style="display:flex;align-items:center;margin-bottom:20px;">'
             f'<img src="data:image/png;base64,{logo_b64}" width="160" style="margin-right:12px;">'
-            f'<h1 style="margin:0; color:{COLOR_DARK};">웹보드 VOC 대시보드</h1></div>', unsafe_allow_html=True
+            f'<h1 style="margin:0;">웹보드 VOC 대시보드</h1></div>', unsafe_allow_html=True
         )
     else:
         st.title("📊 웹보드 VOC 대시보드")
@@ -643,7 +539,7 @@ def main():
     # ------- 사이드바 -------
     with st.sidebar:
         st.markdown("---")
-        st.markdown(f"<h3 style='color:{COLOR_DARK}; font-weight: 700; margin-bottom: 10px;'>📅 기간 선택</h3>", unsafe_allow_html=True)
+        st.subheader("📅 기간 선택")
 
         if voc_df.empty:
             st.warning("VOC 데이터가 없습니다.")
@@ -677,8 +573,7 @@ def main():
                 st.button("최근 30일", use_container_width=True, on_click=lambda:_set_days(30))
 
         st.markdown("---")
-        st.markdown(f"<h3 style='color:{COLOR_DARK}; font-weight: 700; margin-bottom: 10px;'>🕹️ 게임 및 플랫폼 선택</h3>", unsafe_allow_html=True)
-
+        st.subheader("🕹️ 게임 및 플랫폼 선택")
 
         game_filters = {
             "뉴맞고": ["뉴맞고 (전체)", "뉴맞고 MOB", "뉴맞고 PC", "뉴맞고 for kakao"],
@@ -783,21 +678,29 @@ def main():
         st.sidebar.button("로그아웃", on_click=st.logout)
         return
 
+    # ===== CSS 스타일 조정 (VOC 건수 폰트 크기 조정) =====
+    st.markdown("""
+        <style>
+            /* metric value 폰트 크기 증가 */
+            [data-testid="stMetricValue"] {
+                font-size: 1.8rem; /* 기존보다 크게 설정 */
+            }
+            /* metric label 폰트 크기 증가 및 굵게 */
+            [data-testid="stMetricLabel"] label {
+                font-size: 1rem;
+                font-weight: bold;
+            }
+        </style>
+    """, unsafe_allow_html=True)
+    # ===== CSS 스타일 조정 끝 =====
 
-    # ===== 대시보드 상단 요약 (기간 전체 VOC 건수 제거, 디자인 적용) =====
-    st.markdown(f'<h2 class="section-header-custom">🚀 핵심 지표 요약</h2>', unsafe_allow_html=True)
-    
-    # 1. 전일 VOC 컨디션 요약 및 심층 분석 (하나의 시각적 카드 컨테이너)
-    with st.container():
-        # HTML 카드 시작
-        st.markdown(f"""
-            <div style="background-color: white; border-radius: 0.75rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-bottom: 20px;">
-                <h3 style='color:{COLOR_DARK}; font-weight: 700; font-size: 1.5rem; margin-bottom: 1rem;'>전일 VOC 컨디션 분석</h3>
-            """, unsafe_allow_html=True)
+    # ===== 대시보드 상단 요약 (기간 전체 VOC 건수 제거) =====
+    with st.container(border=True):
         
+        # 1. 전일 VOC 컨디션 요약 및 심층 분석 (하나의 컨테이너로 시각적 그룹핑)
         current_kdate = datetime.now(KST).date()
         yesterday_date = current_kdate - timedelta(days=1)
-        st.markdown(f"<p style='color: #6c757d; font-size: 1rem; margin-bottom: 20px;'>기준일: **{yesterday_date.strftime('%Y-%m-%d')}**</p>", unsafe_allow_html=True)
+        st.header(f"🚀 전일 VOC 컨디션 ({yesterday_date.strftime('%Y-%m-%d')})")
         
         game_summaries = get_yesterday_summary_by_game(voc_df, current_kdate)
         games_to_show = ["뉴맞고", "섯다", "포커", "쇼다운홀덤", "뉴베가스"]
@@ -829,15 +732,15 @@ def main():
             summary_text = summary_data['sample']['인사이트'].split(':')[0]
             
             color = "green"
-            if "🔥 심각" in summary_text: color = COLOR_NEGATIVE # 심각 빨간색
-            elif "⚠️ 주의" in summary_text: color = COLOR_ACCENT  # 주의 노란색
+            if "🔥 심각" in summary_text: color = "red"
+            elif "⚠️ 주의" in summary_text: color = "orange"
             
             cols[i].markdown(f'<p style="color:{color}; font-size: 0.9em; margin-top: -10px;">{summary_text}</p>', unsafe_allow_html=True)
         
-        st.markdown("<hr style='border-top: 1px solid #E0E0E0; margin-top: 1.5rem; margin-bottom: 1.5rem;'>", unsafe_allow_html=True) # 요약 메트릭과 심층 분석 구분선
+        st.markdown("---") # 요약 메트릭과 심층 분석 구분선
 
         # 1-2. 게임별 심층 분석 (Expander를 사용하여 깔끔하게)
-        st.markdown(f"<h4 style='color:{COLOR_DARK}; font-weight: 700; font-size: 1.2rem; margin-bottom: 1rem;'>🔍 게임별 상세 이슈 분석</h4>", unsafe_allow_html=True)
+        st.subheader(f"🔍 게임별 상세 이슈 분석")
 
         for game in games_to_show:
             summary_data = game_summaries.get(game, {})
@@ -851,16 +754,15 @@ def main():
             # Expander 제목에 핵심 정보 포함
             expander_title = f"{icon} **{game}** | **VOC: {summary_data['count']} 건** | {sample['인사이트']}"
             
-            # st.expander에 직접 style을 적용하기 어려우므로, Custom CSS가 적용된 클래스 사용
             with st.expander(expander_title):
                 # 1. 핵심 VOC 샘플
-                st.markdown(f"**주요 이슈 태그:** <span style='color:{COLOR_PRIMARY};'>{sample['태그']}</span>", unsafe_allow_html=True)
+                st.markdown(f"**주요 이슈 태그:** `{sample['태그']}`")
                 st.markdown(f"**VOC 제목:** {sample['제목']}")
                 
-                # HTML 블록 (인용구 스타일 적용)
+                # HTML 블록처럼 보이도록 구성
                 st.markdown(f"""
-                    <div class="voc-quote">
-                        <p style="font-style: italic; color: {COLOR_DARK}; margin-bottom: 0;">
+                    <div style="border-left: 4px solid #F0F2F6; padding-left: 15px; margin: 15px 0; background-color: #FAFAFA; border-radius: 4px;">
+                        <p style="font-style: italic; color: #555555; margin-bottom: 0;">
                             {sample['내용']}
                         </p>
                     </div>
@@ -878,9 +780,7 @@ def main():
                 else:
                     st.info(f"**정상 컨디션** | 전일 VOC 컨디션 양호. {sample['태그']} 관련 VOC는 일반적인 문의 수준입니다. 필요 시 워크시트에서 상세 내역을 확인하세요.")
 
-        st.markdown("</div>", unsafe_allow_html=True) # HTML 카드 끝
-
-    st.markdown("<hr style='border-top: 1px solid #A3B3C2;'>", unsafe_allow_html=True)
+    st.markdown("---")
 
 
     # ===== 탭 =====
@@ -888,33 +788,20 @@ def main():
 
     # --- 탭1: 카테고리 분석 ---
     with tabs[0]:
-        st.markdown(f'<h2 class="section-header-custom">📊 카테고리 분석</h2>', unsafe_allow_html=True)
+        c1, c2 = st.columns(2)
         
-        with st.container():
-            st.markdown(f"""
-                <div style="background-color: white; border-radius: 0.75rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-top: 20px; margin-bottom: 20px;">
-                """, unsafe_allow_html=True)
-            
-            c1, c2 = st.columns(2)
-            
-            # 날짜 범위 설정 (기간 선택 사이드바를 활용)
-            if not date_range:
-                st.warning("유효한 조회 기간이 설정되지 않았습니다.")
-            else:
-                with c1:
-                    st.plotly_chart(create_trend_chart(view_df, (start_dt, end_dt), "일자별 VOC 발생 추이"), use_container_width=True)
-                with c2:
-                    st.plotly_chart(create_donut_chart(view_df, "주요 L1 카테고리", group_by='L1 태그'), use_container_width=True)
-            
-            st.markdown("</div>", unsafe_allow_html=True)
+        # 날짜 범위 설정 (기간 선택 사이드바를 활용)
+        if not date_range:
+            st.warning("유효한 조회 기간이 설정되지 않았습니다.")
+        else:
+            # 기간 설정 및 데이터프레임 필터링은 위에서 이미 view_df에 적용됨
+            with c1:
+                st.plotly_chart(create_trend_chart(view_df, (start_dt, end_dt), "일자별 VOC 발생 추이"), use_container_width=True)
+            with c2:
+                st.plotly_chart(create_donut_chart(view_df, "주요 L1 카테고리", group_by='L1 태그'), use_container_width=True)
 
-        # VOC 원본 데이터 섹션 (카드 스타일 적용)
-        with st.container():
-            st.markdown(f"""
-                <div style="background-color: white; border-radius: 0.75rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-top: 20px;">
-                    <h3 style="color:{COLOR_DARK}; font-weight: bold;">📑 VOC 원본 데이터 (L2 태그 기준)</h3>
-                """, unsafe_allow_html=True)
-            
+        with st.container(border=True):
+            st.header("📑 VOC 원본 데이터 (L2 태그 기준)")
             top5 = view_df["L2 태그"].value_counts().nlargest(5)
             all_cats = sorted(view_df["L2 태그"].unique())
 
@@ -942,36 +829,26 @@ def main():
                     show_df[["구분","날짜","게임","L1 태그","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]].head(200),
                     use_container_width=True, height=500
                 )
-            st.markdown("</div>", unsafe_allow_html=True)
 
     # --- 탭2: 키워드 검색 ---
     with tabs[1]:
-        st.markdown(f'<h2 class="section-header-custom">🔍 키워드 검색</h2>', unsafe_allow_html=True)
-        
-        # 키워드 검색 폼 (카드 스타일 적용)
-        with st.container():
-            st.markdown(f"""
-                <div style="background-color: white; border-radius: 0.75rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-bottom: 20px;">
-                    <h3 style="color:{COLOR_DARK}; font-weight: bold;">키워드 검색 도구</h3>
-                """, unsafe_allow_html=True)
+        st.header("🔍 키워드 검색")
+        if "last_search_keyword" not in st.session_state:
+            st.session_state.last_search_keyword = ""
 
-            if "last_search_keyword" not in st.session_state:
-                st.session_state.last_search_keyword = ""
+        with st.form(key="search_form"):
+            c1, c2 = st.columns([5,1])
+            with c1:
+                keyword = st.text_input(
+                    "검색 키워드:",
+                    value=st.session_state.get("last_search_keyword", ""),
+                    placeholder="예: 환불, 튕김, 업데이트..."
+                )
+            with c2:
+                st.write(""); st.write("")
+                submitted = st.form_submit_button("검색", use_container_width=True)
 
-            with st.form(key="search_form"):
-                c1, c2 = st.columns([5,1])
-                with c1:
-                    keyword = st.text_input(
-                        "검색 키워드:",
-                        value=st.session_state.get("last_search_keyword", ""),
-                        placeholder="예: 환불, 튕김, 업데이트...",
-                        label_visibility="collapsed"
-                    )
-                with c2:
-                    submitted = st.form_submit_button("검색", use_container_width=True)
-
-            st.caption("여러 키워드는 콤마(,)로 구분하여 검색할 수 있습니다. (예: 환불,결제 → '환불' 또는 '결제' 포함)")
-            st.markdown("</div>", unsafe_allow_html=True) # End of Form Card
+        st.caption("여러 키워드는 콤마(,)로 구분하여 검색할 수 있습니다. (예: 환불,결제 → '환불' 또는 '결제' 포함)")
 
         if submitted:
             st.session_state.last_search_keyword = keyword
@@ -992,26 +869,16 @@ def main():
                     st.success(f"'{last_keyword}' 포함 VOC: {len(r)} 건")
                     r['문의내용_요약'] = r['문의내용_요약'].apply(mask_phone_number)
 
-                    # 검색 결과 추이 (카드 스타일)
-                    with st.container():
-                        st.markdown(f"""
-                            <div style="background-color: white; border-radius: 0.75rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-top: 20px; margin-bottom: 20px;">
-                                <h3 style="color:{COLOR_DARK}; font-weight: bold;">검색 결과 추이</h3>
-                            """, unsafe_allow_html=True)
+                    with st.container(border=True):
+                        st.header("검색 결과 추이")
                         st.plotly_chart(create_trend_chart(r, (start_dt, end_dt), f"'{last_keyword}' 일자별 발생 추이"),
                                              use_container_width=True)
-                        st.markdown("</div>", unsafe_allow_html=True)
-
-                    # 관련 VOC 목록 (카드 스타일)
-                    with st.container():
-                        st.markdown(f"""
-                            <div style="background-color: white; border-radius: 0.75rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-bottom: 20px;">
-                                <h3 style="color:{COLOR_DARK}; font-weight: bold;">관련 VOC 목록</h3>
-                            """, unsafe_allow_html=True)
+                    with st.container(border=True):
+                        st.header("관련 VOC 목록")
                         for c in r.columns:
                             r[c] = r[c].astype(str)
                         st.download_button(
-                            "📥 CSV 다운로드",
+                            "📥 검색 결과 다운로드",
                             data=r.to_csv(index=False).encode("utf-8-sig"),
                             file_name=f"voc_search_{last_keyword}_{datetime.now(KST).strftime('%Y%m%d')}.csv",
                             mime="text/csv"
@@ -1021,49 +888,33 @@ def main():
                             disp_r[["구분","날짜","게임","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]].head(200),
                             use_container_width=True, height=400
                         )
-                        st.markdown("</div>", unsafe_allow_html=True)
-
-                    # 연관 키워드 워드클라우드 (카드 스타일)
-                    with st.container():
-                        st.markdown(f"""
-                            <div style="background-color: white; border-radius: 0.75rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-bottom: 20px;">
-                                <h3 style="color:{COLOR_DARK}; font-weight: bold;">연관 키워드 워드클라우드</h3>
-                            """, unsafe_allow_html=True)
+                    with st.container(border=True):
+                        st.header("연관 키워드 워드클라우드")
                         generate_wordcloud(r["문의내용"])
-                        st.markdown("</div>", unsafe_allow_html=True)
 
     # --- 탭3: 결제/인증 리포트 ---
     with tabs[2]:
-        st.markdown(f'<h2 class="section-header-custom">💳 결제/인증 리포트</h2>', unsafe_allow_html=True)
+        st.header("💳 결제/인증 리포트")
         st.info("이 탭은 '계정'(로그인/인증) 및 '재화/결제'와 관련된 VOC만 필터링하여 보여줍니다.")
         payment_auth_df = view_df[view_df['L1 태그'].isin(['계정', '재화/결제'])].copy()
 
         if payment_auth_df.empty:
             st.warning("해당 기간에 결제 또는 인증 관련 VOC가 없습니다.")
         else:
-            with st.container():
-                st.markdown(f"""
-                    <div style="background-color: white; border-radius: 0.75rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-top: 20px; margin-bottom: 20px;">
-                    """, unsafe_allow_html=True)
-                c1, c2 = st.columns(2)
-                with c1:
-                    st.plotly_chart(create_trend_chart(payment_auth_df, (start_dt, end_dt), "결제/인증 관련 VOC 발생 추이"), use_container_width=True)
-                with c2:
-                    l2_counts_payment = payment_auth_df["L2 태그"].value_counts().nlargest(10).sort_values(ascending=True)
-                    fig_l2_payment = px.bar(
-                        l2_counts_payment, x=l2_counts_payment.values, y=l2_counts_payment.index, orientation='h',
-                        title=f"<b style='color:{COLOR_DARK};'>결제/인증 태그 현황 TOP 10</b>", labels={'x': '건수', 'y': '태그'}, text_auto=True,
-                        color_discrete_sequence=[COLOR_PRIMARY]
-                    )
-                    fig_l2_payment.update_layout(height=300, plot_bgcolor='white', paper_bgcolor='white', font=dict(family='Noto Sans KR, sans-serif'))
-                    st.plotly_chart(fig_l2_payment, use_container_width=True)
-                st.markdown("</div>", unsafe_allow_html=True)
+            c1, c2 = st.columns(2)
+            with c1:
+                st.plotly_chart(create_trend_chart(payment_auth_df, (start_dt, end_dt), "결제/인증 관련 VOC 발생 추이"), use_container_width=True)
+            with c2:
+                l2_counts_payment = payment_auth_df["L2 태그"].value_counts().nlargest(10).sort_values(ascending=True)
+                fig_l2_payment = px.bar(
+                    l2_counts_payment, x=l2_counts_payment.values, y=l2_counts_payment.index, orientation='h',
+                    title="<b>결제/인증 태그 현황 TOP 10</b>", labels={'x': '건수', 'y': '태그'}, text_auto=True
+                )
+                fig_l2_payment.update_layout(height=300)
+                st.plotly_chart(fig_l2_payment, use_container_width=True)
 
-            with st.container():
-                st.markdown(f"""
-                    <div style="background-color: white; border-radius: 0.75rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-top: 20px;">
-                        <h3 style="color:{COLOR_DARK}; font-weight: bold;">📑 관련 VOC 원본 데이터</h3>
-                    """, unsafe_allow_html=True)
+            with st.container(border=True):
+                st.header("📑 관련 VOC 원본 데이터")
                 for c in payment_auth_df.columns:
                     payment_auth_df[c] = payment_auth_df[c].astype(str)
                 disp_payment = payment_auth_df.rename(columns={'플랫폼': '구분', '문의내용_요약': '문의 내용'})
@@ -1071,56 +922,43 @@ def main():
                     disp_payment[["구분","날짜","게임","L1 태그","L2 태그","상담제목","문의 내용","GSN(USN)","기기정보","감성"]].head(200),
                     use_container_width=True, height=500
                 )
-                st.markdown("</div>", unsafe_allow_html=True)
-
 
     # ===== 어드민 멤버 관리 (최하단만) =====
     if is_admin:
-        st.markdown("<hr style='border-top: 1px solid #A3B3C2;'>", unsafe_allow_html=True)
-        st.markdown(f'<h2 class="section-header-custom" style="border-bottom: 3px solid {COLOR_ACCENT};">🛡️ 어드민 멤버 관리</h2>', unsafe_allow_html=True)
+        st.markdown("---")
+        st.subheader("🛡️ 어드민 멤버 관리")
+        users_df_latest = fetch_users_table(spreadsheet_id)
+        tab_req, tab_members = st.tabs(["접근 요청 목록", "멤버 관리 목록"])
 
-        # 어드민 섹션도 카드 스타일로 감싸기
-        with st.container():
-            st.markdown(f"""
-                <div style="background-color: white; border-radius: 0.75rem; padding: 1.5rem; box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1); margin-top: 20px;">
-                """, unsafe_allow_html=True)
-            
-            users_df_latest = fetch_users_table(spreadsheet_id)
-            tab_req, tab_members = st.tabs(["접근 요청 목록", "멤버 관리 목록"])
+        with tab_req:
+            pending = users_df_latest[users_df_latest["status"] == "pending"]
+            if pending.empty:
+                st.info("대기 중인 요청이 없습니다.")
+            else:
+                for _, r in pending.iterrows():
+                    c1, c2, c3, c4 = st.columns([3,2,2,2])
+                    c1.write(f"**{r['email']}**")
+                    c2.write(r.get("name",""))
+                    c3.write(r.get("request_date",""))
+                    if c4.button("승인", key=f"approve_{r['email']}"):
+                        approve_user(spreadsheet_id, r["email"])
 
-            with tab_req:
-                pending = users_df_latest[users_df_latest["status"] == "pending"]
-                if pending.empty:
-                    st.info("대기 중인 요청이 없습니다.")
-                else:
-                    st.markdown(f"<p style='font-weight: bold; color: {COLOR_DARK};'>승인 대기 중인 요청: {len(pending)} 건</p>", unsafe_allow_html=True)
-                    for _, r in pending.iterrows():
-                        c1, c2, c3, c4 = st.columns([3,2,2,2])
-                        c1.write(f"**{r['email']}**")
-                        c2.write(r.get("name",""))
-                        c3.write(r.get("request_date",""))
-                        if c4.button("승인", key=f"approve_{r['email']}"):
-                            approve_user(spreadsheet_id, r["email"])
-
-            with tab_members:
-                approved = users_df_latest[users_df_latest["status"] == "approved"]
-                if approved.empty:
-                    st.info("승인된 멤버가 없습니다.")
-                else:
-                    st.markdown(f"<p style='font-weight: bold; color: {COLOR_DARK};'>현재 승인된 멤버: {len(approved)} 명</p>", unsafe_allow_html=True)
-                    for _, r in approved.iterrows():
-                        c1, c2, c3, c4, c5 = st.columns([3,2,2,2,1])
-                        c1.write(f"**{r['email']}**")
-                        c2.write(r.get("name",""))
-                        c3.write(r.get("request_date",""))
-                        c4.write(r.get("approved_date",""))
-                        if c5.button("🗑️", key=f"revoke_{r['email']}"):
-                            revoke_user(spreadsheet_id, r["email"])
-                            
-            st.markdown("</div>", unsafe_allow_html=True) # End of Admin Card
+        with tab_members:
+            approved = users_df_latest[users_df_latest["status"] == "approved"]
+            if approved.empty:
+                st.info("승인된 멤버가 없습니다.")
+            else:
+                for _, r in approved.iterrows():
+                    c1, c2, c3, c4, c5 = st.columns([3,2,2,2,1])
+                    c1.write(f"**{r['email']}**")
+                    c2.write(r.get("name",""))
+                    c3.write(r.get("request_date",""))
+                    c4.write(r.get("approved_date",""))
+                    if c5.button("🗑️", key=f"revoke_{r['email']}"):
+                        revoke_user(spreadsheet_id, r["email"])
 
     st.sidebar.button("로그아웃", on_click=st.logout)
-    st.markdown("<hr style='border-top: 1px solid #A3B3C2;'>", unsafe_allow_html=True)
+    st.markdown("---")
     logo_b64 = get_image_as_base64(LOGO_IMAGE)
     if logo_b64:
         st.markdown(

@@ -367,8 +367,8 @@ def get_yesterday_summary_by_game(voc_df: pd.DataFrame, current_date: date) -> d
     yesterday = current_date - timedelta(days=1)
     two_days_ago = current_date - timedelta(days=2)
     
-    # 🚨 [제외할 태그 목록 정의] - 밸런스/불만, 무료충전소/광고, 이벤트 제외
-    EXCLUDE_TAGS = ['밸런스/불만 (패몰림)', '광고/무료충전소', '이벤트'] 
+    # 🚨 [제외할 태그 목록 정의] - '단순 문의/미분류' 추가됨
+    EXCLUDE_TAGS = ['밸런스/불만 (패몰림)', '광고/무료충전소', '이벤트', '단순 문의/미분류'] 
     
     GAME_ICONS = {"뉴맞고": "🎴", "섯다": "🎴", "포커": "♣️", "쇼다운홀덤": "♠️", "뉴베가스": "🎰"}
     games = list(GAME_ICONS.keys())
@@ -436,7 +436,7 @@ def get_yesterday_summary_by_game(voc_df: pd.DataFrame, current_date: date) -> d
             
             # VOC 샘플이 정상적으로 추출되지 않았을 경우, 인사이트 문구 조정
             if sample_voc["태그"] == "---" and sample_voc["인사이트"] == "전일 VOC는 있으나, 제외 태그 항목만 발생함":
-                 summary = f"🟢 양호: 컨디션 안정. 발생 VOC는 주로 제외 항목(`밸런스/불만` 등)입니다."
+                 summary = f"🟢 양호: 컨디션 안정. 발생 VOC는 주로 제외 항목(`밸런스/불만`, `단순 문의` 등)입니다."
 
             sample_voc["인사이트"] = summary
         

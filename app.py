@@ -348,7 +348,7 @@ def load_voc_data(spreadsheet_id: str) -> pd.DataFrame:
         df["GSN(USN)"] = df.apply(extract_gsn_usn, axis=1)
         df["기기정보"] = df.apply(extract_device_info, axis=1)
         # 문의내용 요약은 truncate 함수에서 처리 (마스킹은 나중에)
-        df["문의내용_요약"] = df["문의내용"].apply(truncate_inquiry_content) 
+        df["문의내용_요약"] = df["문의내용"].apply(truncate_inquiry_content)  
         df["검색용_문의내용"] = df["문의내용_요약"]
         df["감성"] = df["문의내용"].apply(classify_sentiment)
         return df
@@ -479,7 +479,7 @@ def generate_wordcloud(text_series):
     font_path = font_rel if os.path.exists(font_rel) else (font_win if os.path.exists(font_win) else None)
     try:
         wc = WordCloud(font_path=font_path if font_path else None, width=400, height=200, background_color="white",
-                       stopwords=set(['문의','게임','피망','고객','내용','확인','답변','부탁','처리','관련','안녕하세요'])).generate(s)
+                         stopwords=set(['문의','게임','피망','고객','내용','확인','답변','부탁','처리','관련','안녕하세요'])).generate(s)
         fig, ax = plt.subplots(figsize=(4,2))
         ax.imshow(wc, interpolation="bilinear"); ax.axis("off")
         st.pyplot(fig)
@@ -702,6 +702,9 @@ def main():
         yesterday_date = current_kdate - timedelta(days=1)
         st.header(f"🚀 전일 VOC 컨디션 ({yesterday_date.strftime('%Y-%m-%d')})")
         
+        # 🚨 [긴급도 기준 한 줄 추가]
+        st.caption("**긴급도 기준:** '심각'은 부정 감성 VOC 30% 이상, '주의'는 부정 감성 VOC 10% 이상일 경우 표시됩니다. (전일 기준)")
+        
         game_summaries = get_yesterday_summary_by_game(voc_df, current_kdate)
         games_to_show = ["뉴맞고", "섯다", "포커", "쇼다운홀덤", "뉴베가스"]
         
@@ -872,7 +875,7 @@ def main():
                     with st.container(border=True):
                         st.header("검색 결과 추이")
                         st.plotly_chart(create_trend_chart(r, (start_dt, end_dt), f"'{last_keyword}' 일자별 발생 추이"),
-                                             use_container_width=True)
+                                                             use_container_width=True)
                     with st.container(border=True):
                         st.header("관련 VOC 목록")
                         for c in r.columns:

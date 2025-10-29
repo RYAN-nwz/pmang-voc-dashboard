@@ -367,7 +367,7 @@ def get_yesterday_summary_by_game(voc_df: pd.DataFrame, current_date: date) -> d
     yesterday = current_date - timedelta(days=1)
     two_days_ago = current_date - timedelta(days=2)
     
-    # 🚨 [제외할 태그 목록 정의] - '단순 문의/미분류' 추가됨
+    # 🚨 [제외할 태그 목록 정의] - '단순 문의/미분류' 포함됨
     EXCLUDE_TAGS = ['밸런스/불만 (패몰림)', '광고/무료충전소', '이벤트', '단순 문의/미분류'] 
     
     GAME_ICONS = {"뉴맞고": "🎴", "섯다": "🎴", "포커": "♣️", "쇼다운홀덤": "♠️", "뉴베가스": "🎰"}
@@ -396,8 +396,14 @@ def get_yesterday_summary_by_game(voc_df: pd.DataFrame, current_date: date) -> d
         # 🚨 [핵심 샘플 추출 시 제외할 VOC 필터링]
         neg_df_d1_core = neg_df_d1_all[~neg_df_d1_all['L2 태그'].isin(EXCLUDE_TAGS)].copy()
         
-        neg_count = len(neg_df_d1_all) # 전체 부정 건수는 유지 (컨디션 판단 기준)
-        neg_ratio = neg_count / count_d1 * 100 if count_d1 > 0 else 0
+        neg_count = len(neg_df_d1_all) # 전체 부정 건수는 유지 (분자)
+        
+        # 🚨 [핵심 VOC 건수(분모) 산정] - 제외 태그의 전체 VOC 건수를 분모에서 제외
+        exclude_count = game_df_d1[game_df_d1['L2 태그'].isin(EXCLUDE_TAGS)].shape[0]
+        core_voc_count = count_d1 - exclude_count 
+        
+        # 🚨 [neg_ratio 계산 수정] - 분모를 제외 태그를 뺀 건수로 변경
+        neg_ratio = neg_count / core_voc_count * 100 if core_voc_count > 0 else 0
         
         # 핵심 VOC 샘플 추출 (부정 감성 VOC 중, 제외 태그가 아닌 것만 대상으로)
         sample_voc = {"제목": "VOC 없음", "내용": "---", "태그": "---", "인사이트": "전일 VOC 발생 기록 없음"}
@@ -428,11 +434,15 @@ def get_yesterday_summary_by_game(voc_df: pd.DataFrame, current_date: date) -> d
         # 개선 인사이트 자동 생성 (키워드/비율 기반)
         if count_d1 > 0:
             if neg_ratio >= 30:
-                summary = f"🔥 심각: 부정 VOC {neg_ratio:.0f}%, **{sample_voc['태그']}** 긴급 확인 필요"
+                # 🚨 [인사이트 문구 태그 수정] - 태그가 ---인 경우를 위해 안전 장치 추가
+                tag_info = f"**{sample_voc['태그']}**" if sample_voc['태그'] != '---' else "주요 이슈"
+                summary = f"🔥 심각: 부정 VOC {neg_ratio:.0f}%, {tag_info} 긴급 확인 필요"
             elif neg_ratio >= 10:
-                summary = f"⚠️ 주의: 부정 VOC {neg_ratio:.0f}%, **{sample_voc['태그']}** 모니터링 필요"
+                tag_info = f"**{sample_voc['태그']}**" if sample_voc['태그'] != '---' else "주요 이슈"
+                summary = f"⚠️ 주의: 부정 VOC {neg_ratio:.0f}%, {tag_info} 모니터링 필요"
             else:
-                summary = f"🟢 양호: 컨디션 안정, 주요 이슈 태그: **{sample_voc['태그']}**"
+                tag_info = f"**{sample_voc['태그']}**" if sample_voc['태그'] != '---' else ""
+                summary = f"🟢 양호: 컨디션 안정, 주요 이슈 태그: {tag_info}"
             
             # VOC 샘플이 정상적으로 추출되지 않았을 경우, 인사이트 문구 조정
             if sample_voc["태그"] == "---" and sample_voc["인사이트"] == "전일 VOC는 있으나, 제외 태그 항목만 발생함":
@@ -720,7 +730,7 @@ def main():
         st.header(f"🚀 전일 VOC 컨디션 ({yesterday_date.strftime('%Y-%m-%d')})")
         
         # 🚨 [긴급도 기준 한 줄 추가]
-        st.caption("**긴급도 기준:** '심각'은 부정 감성 VOC 30% 이상, '주의'는 부정 감성 VOC 10% 이상일 경우 표시됩니다. (전일 기준)")
+        st.caption("**긴급도 기준:** '심각'은 부정 감성 VOC 30% 이상, '주의'는 부정 감성 VOC 10% 이상일 경우 표시됩니다. (비핵심 VOC 제외 기준)")
         
         game_summaries = get_yesterday_summary_by_game(voc_df, current_kdate)
         games_to_show = ["뉴맞고", "섯다", "포커", "쇼다운홀덤", "뉴베가스"]
@@ -794,11 +804,14 @@ def main():
                 
                 # 부정 비율에 따른 자동 인사이트
                 if summary_data['neg_ratio'] >= 30:
-                    st.error(f"**긴급 대응** | 전일 VOC 중 {summary_data['neg_ratio']:.0f}%가 부정 감성. {sample['태그']} 관련 이슈 발생 시, **영향도 파악 및 긴급 대응이 필요**합니다.")
+                    tag_info = f"**{sample['태그']}**" if sample['태그'] != '---' else "주요 이슈"
+                    st.error(f"**긴급 대응** | 부정 VOC 비율 {summary_data['neg_ratio']:.0f}% (핵심 VOC 기준). {tag_info} 관련 이슈 발생 시, **영향도 파악 및 긴급 대응이 필요**합니다.")
                 elif summary_data['neg_ratio'] >= 10:
-                    st.warning(f"**집중 모니터링** | 전일 VOC 중 {summary_data['neg_ratio']:.0f}%가 부정 감성. {sample['태그']} 관련 불만이 증가 추세일 수 있습니다. **해당 원본 VOC 검토를 시작**하세요.")
+                    tag_info = f"**{sample['태그']}**" if sample['태그'] != '---' else "주요 이슈"
+                    st.warning(f"**집중 모니터링** | 부정 VOC 비율 {summary_data['neg_ratio']:.0f}% (핵심 VOC 기준). {tag_info} 관련 불만이 증가 추세일 수 있습니다. **해당 원본 VOC 검토를 시작**하세요.")
                 else:
-                    st.info(f"**정상 컨디션** | 전일 VOC 컨디션 양호. {sample['태그']} 관련 VOC는 일반적인 문의 수준입니다. 필요 시 워크시트에서 상세 내역을 확인하세요.")
+                    tag_info = f"**{sample['태그']}**" if sample['태그'] != '---' else ""
+                    st.info(f"**정상 컨디션** | 부정 VOC 비율 {summary_data['neg_ratio']:.0f}% (핵심 VOC 기준). {tag_info} 관련 VOC는 일반적인 문의 수준입니다.")
 
     st.markdown("---")
 

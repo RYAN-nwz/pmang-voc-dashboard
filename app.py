@@ -357,7 +357,7 @@ def load_voc_data(spreadsheet_id: str) -> pd.DataFrame:
         st.exception(e)
         return pd.DataFrame()
 
-# 🚨 [수정 및 확장된 함수] 게임별 전일 VOC 핵심 요약 및 샘플 추출
+# 🚨 [수정된 함수] 게임별 전일 VOC 핵심 요약 및 샘플 추출
 def get_yesterday_summary_by_game(voc_df: pd.DataFrame, current_date: date) -> dict:
     """전일 게임별 VOC 데이터를 분석하여 건수, 증감, 부정 비율, 핵심 VOC 샘플을 반환합니다."""
     
@@ -367,7 +367,7 @@ def get_yesterday_summary_by_game(voc_df: pd.DataFrame, current_date: date) -> d
     yesterday = current_date - timedelta(days=1)
     two_days_ago = current_date - timedelta(days=2)
     
-    # 🚨 [제외할 태그 목록 정의] - '단순 문의/미분류' 포함됨
+    # 🚨 [제외할 태그 목록 정의] - 밸런스/불만, 무료충전소/광고, 이벤트, 단순 문의/미분류 제외
     EXCLUDE_TAGS = ['밸런스/불만 (패몰림)', '광고/무료충전소', '이벤트', '단순 문의/미분류'] 
     
     GAME_ICONS = {"뉴맞고": "🎴", "섯다": "🎴", "포커": "♣️", "쇼다운홀덤": "♠️", "뉴베가스": "🎰"}
@@ -390,19 +390,20 @@ def get_yesterday_summary_by_game(voc_df: pd.DataFrame, current_date: date) -> d
         # 증감 계산
         delta = count_d1 - count_d2
         
-        # 부정 VOC 분석
+        # 전체 VOC 분석 (부정 VOC)
         neg_df_d1_all = game_df_d1[game_df_d1["감성"] == "부정"]
         
-        # 🚨 [핵심 샘플 추출 시 제외할 VOC 필터링]
+        # 🚨 [핵심 샘플 추출 시 제외할 VOC 필터링 (핵심 부정 VOC)]
         neg_df_d1_core = neg_df_d1_all[~neg_df_d1_all['L2 태그'].isin(EXCLUDE_TAGS)].copy()
         
-        neg_count = len(neg_df_d1_all) # 전체 부정 건수는 유지 (분자)
+        # 🚨 [수정] 분자: 핵심 부정 VOC 건수만 사용
+        neg_count = len(neg_df_d1_core) 
         
-        # 🚨 [핵심 VOC 건수(분모) 산정] - 제외 태그의 전체 VOC 건수를 분모에서 제외
+        # 🚨 [핵심 VOC 건수(분모) 산정] - 전체 VOC 중 제외 태그 건수를 제외
         exclude_count = game_df_d1[game_df_d1['L2 태그'].isin(EXCLUDE_TAGS)].shape[0]
         core_voc_count = count_d1 - exclude_count 
         
-        # 🚨 [neg_ratio 계산 수정] - 분모를 제외 태그를 뺀 건수로 변경
+        # 🚨 [neg_ratio 계산 수정] - 분모와 분자 모두 핵심 VOC 기준으로 계산
         neg_ratio = neg_count / core_voc_count * 100 if core_voc_count > 0 else 0
         
         # 핵심 VOC 샘플 추출 (부정 감성 VOC 중, 제외 태그가 아닌 것만 대상으로)
@@ -434,7 +435,6 @@ def get_yesterday_summary_by_game(voc_df: pd.DataFrame, current_date: date) -> d
         # 개선 인사이트 자동 생성 (키워드/비율 기반)
         if count_d1 > 0:
             if neg_ratio >= 30:
-                # 🚨 [인사이트 문구 태그 수정] - 태그가 ---인 경우를 위해 안전 장치 추가
                 tag_info = f"**{sample_voc['태그']}**" if sample_voc['태그'] != '---' else "주요 이슈"
                 summary = f"🔥 심각: 부정 VOC {neg_ratio:.0f}%, {tag_info} 긴급 확인 필요"
             elif neg_ratio >= 10:
@@ -781,8 +781,21 @@ def main():
             sample = summary_data['sample']
             icon = summary_data['icon']
             
-            # Expander 제목에 핵심 정보 포함
-            expander_title = f"{icon} **{game}** | **VOC: {summary_data['count']} 건** | {sample['인사이트']}"
+            # 🚨 [추가] 핵심 이슈 태그의 건수 계산
+            core_tag = sample['태그']
+            core_tag_count = 0
+            if core_tag != '---':
+                yesterday = current_kdate - timedelta(days=1)
+                game_df_d1 = voc_df[(voc_df["날짜_dt"].dt.date == yesterday) & (voc_df["게임"] == game)]
+                core_tag_count = game_df_d1[game_df_d1['L2 태그'] == core_tag].shape[0]
+
+            # 🚨 [수정] Expander 제목에 핵심 태그 건수 정보 추가
+            if core_tag_count > 0:
+                tag_count_info = f" | **{core_tag}**: {core_tag_count} 건"
+            else:
+                tag_count_info = ""
+                
+            expander_title = f"{icon} **{game}** | **전일 VOC: {summary_data['count']} 건**{tag_count_info} | {sample['인사이트']}"
             
             with st.expander(expander_title):
                 # 1. 핵심 VOC 샘플

@@ -781,7 +781,7 @@ def main():
             sample = summary_data['sample']
             icon = summary_data['icon']
             
-            # 🚨 [추가] 핵심 이슈 태그의 건수 계산
+            # 🚨 [수정] 핵심 이슈 태그의 건수 계산
             core_tag = sample['태그']
             core_tag_count = 0
             if core_tag != '---':
@@ -789,13 +789,15 @@ def main():
                 game_df_d1 = voc_df[(voc_df["날짜_dt"].dt.date == yesterday) & (voc_df["게임"] == game)]
                 core_tag_count = game_df_d1[game_df_d1['L2 태그'] == core_tag].shape[0]
 
-            # 🚨 [수정] Expander 제목에 핵심 태그 건수 정보 추가
+            # 🚨 [수정] Expander 제목에서 '전일 VOC' 항목 제거
             if core_tag_count > 0:
+                # 핵심 태그 건수만 표시
                 tag_count_info = f" | **{core_tag}**: {core_tag_count} 건"
             else:
                 tag_count_info = ""
                 
-            expander_title = f"{icon} **{game}** | **전일 VOC: {summary_data['count']} 건**{tag_count_info} | {sample['인사이트']}"
+            # '전일 VOC: N 건' 제거하고, 게임명과 핵심 태그 건수, 인사이트만 유지
+            expander_title = f"{icon} **{game}**{tag_count_info} | {sample['인사이트']}"
             
             with st.expander(expander_title):
                 # 1. 핵심 VOC 샘플
